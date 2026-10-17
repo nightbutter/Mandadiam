@@ -22,93 +22,113 @@ module.exports = {
             return;
         }
 
-        const characterService = require("../../services/characterService");
-        const attachment = interaction.options.getAttachment("image");
+        // Acknowledge within Discord's 3s window before any database
+        // or validation work — every later response uses editReply.
+        await interaction.deferReply({ ephemeral: true });
 
-        const validation =
-            characterService.validateImageAttachment(attachment);
+        const fail = content => interaction.editReply(`❌ ${content}`);
 
-        if (!validation.ok) {
-            await interaction.reply({
-                content: `❌ ${validation.reason}`,
-                ephemeral: true
-            });
-            return;
-        }
+        try {
+            const characterService =
+                require("../../services/characterService");
+            const { getProfile } =
+                require("../../services/playerService");
 
-        // Resolve the target character: named one, else the active one.
-        const name = interaction.options.getString("character");
-        let characterId = null;
+            const attachment = interaction.options.getAttachment("image");
+            const validation =
+                characterService.validateImageAttachment(attachment);
 
-        if (name) {
-            const found = await characterService.listCharacters(
-                interaction.user.id
-            );
-
-            if (!found.ok) {
-                await interaction.reply({
-                    content:
-                        "You are not registered yet — " +
-                        "use /register first.",
-                    ephemeral: true
-                });
+            if (!validation.ok) {
+                await fail(validation.reason);
                 return;
             }
 
-            const match = found.characters.find(
-                c => c.name === name.trim()
-            );
+            // Resolve the target character: the named one, else the
+            // active character — one round trip either way.
+            const name = interaction.options.getString("character");
+            let characterId = null;
 
-            if (!match) {
-                await interaction.reply({
-                    content:
-                        `You have no character named ` +
-                        `**${name.trim()}**.`,
-                    ephemeral: true
-                });
-                return;
-            }
-
-            characterId = match.id;
-        } else {
-            const active =
-                await characterService.getActiveBattleCharacter(
+            if (name) {
+                const found = await characterService.listCharacters(
                     interaction.user.id
                 );
 
-            if (!active.ok) {
-                await interaction.reply({
-                    content:
-                        "No active character — select one first or " +
-                        "pass the character option.",
-                    ephemeral: true
-                });
+                if (!found.ok) {
+                    await fail(
+                        "You are not registered yet — " +
+                        "use /register first."
+                    );
+                    return;
+                }
+
+                const match = found.characters.find(
+                    c => c.name === name.trim()
+                );
+
+                if (!match) {
+                    await fail(
+                        `You have no character named ` +
+                        `**${name.trim()}**.`
+                    );
+                    return;
+                }
+
+                characterId = match.id;
+            } else {
+                const profile = await getProfile(interaction.user.id);
+
+                if (!profile) {
+                    await fail(
+                        "You are not registered yet — " +
+                        "use /register first."
+                    );
+                    return;
+                }
+
+                if (!profile.activeCharacter) {
+                    await fail(
+                        "No active character — select one with " +
+                        "/character-select or pass the character option."
+                    );
+                    return;
+                }
+
+                characterId = profile.activeCharacter.id;
+            }
+
+            const result = await characterService.setCharacterImage(
+                interaction.user.id, characterId, validation.url
+            );
+
+            if (!result.ok) {
+                await fail(
+                    result.error === "invalid_url"
+                        ? "That attachment URL isn't a supported " +
+                          "Discord image link."
+                        : "Couldn't update that character's image — " +
+                          "it may not be yours."
+                );
                 return;
             }
 
-            // getActiveBattleCharacter strips ids — reload the row.
-            const { getProfile } = require("../../services/playerService");
-            const profile = await getProfile(interaction.user.id);
-            characterId = profile.activeCharacter.id;
-        }
-
-        const result = await characterService.setCharacterImage(
-            interaction.user.id, characterId, validation.url
-        );
-
-        if (!result.ok) {
-            await interaction.reply({
-                content: "Couldn't update that character's image.",
-                ephemeral: true
-            });
-            return;
-        }
-
-        await interaction.reply({
-            content:
+            await interaction.editReply(
                 `🖼️ Portrait updated for ` +
-                `**${result.character.name}**!`,
-            ephemeral: true
-        });
+                `**${result.character.name}**!`
+            );
+        } catch (err) {
+            // Log safely — command name + error only, never env/secrets.
+            console.error(
+                "/character-image failed:", err.stack ?? err
+            );
+
+            try {
+                await interaction.editReply(
+                    "Something went wrong updating the portrait. " +
+                    "Please try again."
+                );
+            } catch {
+                // Interaction already gone — nothing else to do.
+            }
+        }
     }
 };

@@ -3,18 +3,22 @@ const ready = require("./events/ready");
 const interactionCreate = require("./events/interactionCreate");
 const messageCreate = require("./events/messageCreate");
 
-function createClient() {
-    const client = new Client({
-        // GuildMessages + MessageContent are required for the portrait
-        // upload flow — MessageContent is a privileged intent that must
-        // be enabled in the Discord Developer Portal. Without it,
-        // message.attachments arrives empty and uploads can't be read.
-        intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.MessageContent
-        ]
-    });
+function createClient({ messageContent = true } = {}) {
+    const intents = [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages
+    ];
+
+    // MessageContent is a privileged intent — required for the
+    // in-channel portrait upload flow (message.attachments arrives
+    // empty without it). It must be enabled in the Developer Portal;
+    // callers may disable it as a fallback when the portal flag is
+    // missing.
+    if (messageContent) {
+        intents.push(GatewayIntentBits.MessageContent);
+    }
+
+    const client = new Client({ intents });
 
     const events = [ready, interactionCreate, messageCreate];
 
