@@ -5,6 +5,11 @@ const profile = require("./profile");
 const characters = require("./characters");
 const characterCreate = require("./character-create");
 const characterSelect = require("./character-select");
+const battleChallenge = require("./battle-challenge");
+const battleAccept = require("./battle-accept");
+const battleStatus = require("./battle-status");
+const battleAttack = require("./battle-attack");
+const battleForfeit = require("./battle-forfeit");
 
 const commands = new Collection();
 
@@ -14,7 +19,12 @@ for (const command of [
     profile,
     characters,
     characterCreate,
-    characterSelect
+    characterSelect,
+    battleChallenge,
+    battleAccept,
+    battleStatus,
+    battleAttack,
+    battleForfeit
 ]) {
     commands.set(command.data.name, command);
 }

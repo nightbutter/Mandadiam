@@ -98,6 +98,11 @@ Currently implemented:
 | `/characters` | List your characters |
 | `/character-create` | Create a character — see creation rules below |
 | `/character-select` | Set your active character by name |
+| `/battle-challenge` | Challenge a player in this channel (expires in 60s) |
+| `/battle-accept` | Accept a challenge issued to you |
+| `/battle-status` | Show the current battle in this channel |
+| `/battle-attack` | Normal attack on your turn |
+| `/battle-forfeit` | Forfeit a battle or withdraw/decline a challenge |
 
 All player commands reply ephemerally and require `DATABASE_URL`.
 
@@ -149,9 +154,22 @@ character ownership).
   `/character-select`) — services in `src/services/` keep SQL out of
   command code; ownership is enforced by the composite FK.
 - Minimal Discord bot (`/ping`) with graceful shutdown.
+- Two-player PvP battles over Discord: challenges (60s expiry,
+  opponent-only accept), turn-based normal attacks with full combat
+  mechanics (d20 contests, double attack on 20, reflect on defender 20,
+  COST gains), and forfeit.
+
+### Battle state is in-memory
+
+Active battles and pending challenges live in process memory only
+(`src/game/services/battleService.js`). Character `hp`/`cost` mutate
+the in-memory battle copy — **nothing is written back to the database**,
+and the `battles` table is not wired to the live flow yet. Consequences:
+
+- **Restarting the bot loses all active battles and challenges.**
+- A single bot process is required — running multiple instances would
+  give each its own independent battle state.
 
 ## Not implemented yet
-
-- Discord commands that drive battles (`battleService` is ready for them).
 - Battle persistence (HP/COST are intentionally transient).
 - Leveling, EXP, buffs/debuffs, passive skills, aggro.

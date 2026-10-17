@@ -9,7 +9,12 @@ const expected = [
     "profile",
     "characters",
     "character-create",
-    "character-select"
+    "character-select",
+    "battle-challenge",
+    "battle-accept",
+    "battle-status",
+    "battle-attack",
+    "battle-forfeit"
 ];
 
 for (const name of expected) {
