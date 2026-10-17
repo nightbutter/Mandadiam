@@ -36,6 +36,9 @@ src/
 - Node.js 24.x
 - A Neon PostgreSQL database
 - A Discord application + bot token (for running the bot)
+- The **Message Content** privileged intent must be enabled in the
+  Developer Portal for the in-channel portrait upload flow
+  (`/character-image` works without it).
 
 ## Installation
 
@@ -103,6 +106,7 @@ Currently implemented:
 | `/battle-status` | Show the current battle in this channel |
 | `/battle-attack` | Normal attack on your turn |
 | `/battle-forfeit` | Forfeit a battle or withdraw/decline a challenge |
+| `/character-image` | Set a character's portrait from a file attachment |
 | `/rpg` | Open the main menu dashboard (button-driven UI) |
 
 All player commands reply ephemerally and require `DATABASE_URL`.
@@ -119,6 +123,27 @@ original `/rpg` invoker — other users' clicks are rejected.
 Dashboard menu buttons are stateless (they re-read the database on each
 click), so they **survive bot restarts**. Battle and challenge buttons
 do **not** — they depend on in-memory sessions (see below).
+
+### Character portraits
+
+Each character has a nullable `image_url`. Portraits appear on the
+main menu, profile, character detail view, and the battle panel
+(thumbnail = the fighter to act, author icon = the other participant).
+
+Two ways to set an image:
+
+- **`/character-image`** — attach a PNG/JPEG/WebP file (max 5 MB),
+  optionally naming a character (defaults to the active one).
+- **Dashboard**: My Characters → pick a character → **🖼️ Set Image**
+  opens a 90-second upload session; send the image as a message in the
+  same channel. Only the session owner's message is accepted, and
+  invalid files can be retried until it expires or is cancelled.
+
+Images are stored as **Discord CDN attachment URLs** — they remain
+available while the upload message exists. This is **not permanent
+hosting**: if the message is deleted the portrait breaks. Validation
+accepts only `https` URLs on `cdn.discordapp.com` /
+`media.discordapp.net` with PNG/JPEG/WebP MIME + extension and ≤ 5 MB.
 
 ### Character creation rules
 

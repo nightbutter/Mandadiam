@@ -15,6 +15,7 @@ const expected = [
     "battle-status",
     "battle-attack",
     "battle-forfeit",
+    "character-image",
     "rpg"
 ];
 

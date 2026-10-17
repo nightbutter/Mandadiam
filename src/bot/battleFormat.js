@@ -9,6 +9,12 @@ const {
 
 const MAX_LOG_LINES = 6;
 
+const DEFAULT_PORTRAIT = "https://cdn.discordapp.com/embed/avatars/0.png";
+
+function portraitOf(character) {
+    return character?.imageUrl ?? DEFAULT_PORTRAIT;
+}
+
 function pushLog(session, line) {
     session.log.push(line);
 
@@ -63,6 +69,19 @@ function buildBattleEmbed(session, report = null) {
     const turnPlayer = session.players.find(
         p => p.character === battle.currentTurn?.character
     );
+
+    // One embed can only carry one thumbnail + one author icon:
+    // the active fighter gets the thumbnail, the other goes top-left.
+    const active = battle.currentTurn?.character;
+    const other = battle.characters.find(c => c !== active) ?? b;
+
+    if (active) {
+        embed.setThumbnail(portraitOf(active));
+        embed.setAuthor({
+            name: other.name,
+            iconURL: portraitOf(other)
+        });
+    }
 
     embed.addFields({
         name: "Turn",

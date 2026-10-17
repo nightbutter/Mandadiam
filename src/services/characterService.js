@@ -160,6 +160,122 @@ async function selectCharacterById(discordId, characterId) {
     return { ok: true, character };
 }
 
+// --- character portraits -----------------------------------------------------
+
+const IMAGE_RULES = {
+    maxBytes: 5 * 1024 * 1024,
+    mimeTypes: new Set(["image/png", "image/jpeg", "image/webp"]),
+    extensions: /\.(png|jpe?g|webp)$/i,
+    // Discord CDN hosts — attachment URLs must come from here.
+    hosts: ["cdn.discordapp.com", "media.discordapp.net"]
+};
+
+// Validates a Discord attachment for use as a portrait. Checks size,
+// MIME type, extension, and the final HTTPS CDN URL — filename alone
+// is never trusted.
+function validateImageAttachment(attachment) {
+    if (!attachment) {
+        return { ok: false, reason: "Attach a PNG, JPEG, or WebP image." };
+    }
+
+    const size = attachment.size ?? 0;
+
+    if (size <= 0 || size > IMAGE_RULES.maxBytes) {
+        return {
+            ok: false,
+            reason:
+                `Image must be under ` +
+                `${IMAGE_RULES.maxBytes / 1024 / 1024} MB.`
+        };
+    }
+
+    const typeOk =
+        attachment.contentType &&
+        IMAGE_RULES.mimeTypes.has(attachment.contentType.toLowerCase());
+    const extOk =
+        attachment.name && IMAGE_RULES.extensions.test(attachment.name);
+
+    if (!typeOk || !extOk) {
+        return {
+            ok: false,
+            reason: "Only PNG, JPEG, and WebP images are supported."
+        };
+    }
+
+    if (!isAllowedImageUrl(attachment.url)) {
+        return {
+            ok: false,
+            reason: "Attachment URL is not a valid Discord image link."
+        };
+    }
+
+    return { ok: true, url: attachment.url };
+}
+
+function isAllowedImageUrl(url) {
+    try {
+        const parsed = new URL(url);
+        return (
+            parsed.protocol === "https:" &&
+            IMAGE_RULES.hosts.includes(parsed.hostname)
+        );
+    } catch {
+        return false;
+    }
+}
+
+// Shared ownership check — the character must belong to the caller's
+// own player row before any state change is allowed.
+async function ownedCharacter(discordId, characterId) {
+    const player = await playerRepository.findByDiscordId(discordId);
+
+    if (!player) {
+        return { ok: false, error: "not_registered" };
+    }
+
+    const character = await characterRepository.findById(
+        Number(characterId)
+    );
+
+    if (!character || character.player_id !== player.id) {
+        return { ok: false, error: "not_found" };
+    }
+
+    return { ok: true, player, character };
+}
+
+async function setCharacterImage(discordId, characterId, imageUrl) {
+    if (!isAllowedImageUrl(imageUrl)) {
+        return { ok: false, error: "invalid_url" };
+    }
+
+    const owned = await ownedCharacter(discordId, characterId);
+
+    if (!owned.ok) {
+        return owned;
+    }
+
+    const character = await characterRepository.updateImage(
+        owned.character.id, imageUrl
+    );
+
+    return { ok: true, character };
+}
+
+async function clearCharacterImage(discordId, characterId) {
+    const owned = await ownedCharacter(discordId, characterId);
+
+    if (!owned.ok) {
+        return owned;
+    }
+
+    const character = await characterRepository.updateImage(
+        owned.character.id, null
+    );
+
+    return { ok: true, character };
+}
+
 // Loads the player's active character converted to combat-engine shape
 // (hp = max_hp, cost = 0). Used when starting a battle from Discord.
 async function getActiveBattleCharacter(discordId) {
@@ -191,5 +307,10 @@ module.exports = {
     createCharacter,
     listCharacters,
     selectCharacter,
-    selectCharacterById
+    selectCharacterById,
+    IMAGE_RULES,
+    validateImageAttachment,
+    getOwnedCharacter: ownedCharacter,
+    setCharacterImage,
+    clearCharacterImage
 };

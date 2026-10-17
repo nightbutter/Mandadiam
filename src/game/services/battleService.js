@@ -19,7 +19,8 @@ function toBattleCharacter(character) {
         atk: character.atk,
         def: character.def,
         spe: character.spe,
-        cost: 0
+        cost: 0,
+        imageUrl: character.image_url ?? null
     };
 }
 

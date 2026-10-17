@@ -14,6 +14,7 @@ const characterService = require("../services/characterService");
 const battleService = require("../game/services/battleService");
 const views = require("./menuViews");
 const uiSessions = require("./uiSessions");
+const uploadSessions = require("./uploadSessions");
 const { prepareChallenge, trackChallengeMessage } =
     require("./challengeFlow");
 
@@ -199,6 +200,105 @@ async function handleSetActive(interaction, characterId) {
     });
 }
 
+// --- portraits ---------------------------------------------------------------
+
+// Renders the detail view for a character the clicker owns.
+async function showCharacterDetail(interaction, characterId) {
+    const owned = await characterService.getOwnedCharacter(
+        interaction.user.id, characterId
+    );
+
+    if (!owned.ok) {
+        await interaction.reply({
+            content: "Couldn't load that character.",
+            ephemeral: true
+        });
+        return;
+    }
+
+    const profile = await playerService.getProfile(interaction.user.id);
+
+    await interaction.update(
+        views.characterDetailView(
+            owned.character, profile?.player.active_character_id
+        )
+    );
+}
+
+// Starts a pending upload session bound to THIS user + THIS character
+// and swaps the dashboard to the upload prompt. The expiry callback
+// edits the prompt when the session lapses.
+async function handleSetImage(interaction, characterId) {
+    const owned = await characterService.getOwnedCharacter(
+        interaction.user.id, characterId
+    );
+
+    if (!owned.ok) {
+        await interaction.reply({
+            content: "Couldn't load that character.",
+            ephemeral: true
+        });
+        return;
+    }
+
+    const promptMessage = interaction.message;
+
+    uploadSessions.start(
+        interaction.user.id, owned.character.id, () => {
+            promptMessage.edit({
+                embeds: [
+                    new EmbedBuilder()
+                        .setTitle("🖼️ Upload expired")
+                        .setDescription(
+                            "The upload timed out — press " +
+                            "**Set Image** again to retry."
+                        )
+                ],
+                components: [
+                    new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId("menu:chars")
+                            .setLabel("Back to Characters")
+                            .setEmoji("⬅️")
+                            .setStyle(ButtonStyle.Secondary)
+                    )
+                ]
+            }).catch(() => {});
+        }
+    );
+
+    await interaction.update(
+        views.uploadPromptView(owned.character)
+    );
+}
+
+async function handleRemoveImage(interaction, characterId) {
+    const result = await characterService.clearCharacterImage(
+        interaction.user.id, characterId
+    );
+
+    if (!result.ok) {
+        await interaction.reply({
+            content: "Couldn't update that character.",
+            ephemeral: true
+        });
+        return;
+    }
+
+    const profile = await playerService.getProfile(interaction.user.id);
+
+    await interaction.update(
+        views.characterDetailView(
+            result.character, profile?.player.active_character_id
+        )
+    );
+}
+
+async function handleCancelUpload(interaction, characterId) {
+    uploadSessions.cancel(interaction.user.id);
+    await showCharacterDetail(interaction, characterId);
+}
+
 const buttonHandlers = {
     "menu:main": showMain,
     "menu:profile": showProfile,
@@ -226,6 +326,21 @@ async function handleMenuButton(interaction) {
 
     if (customId.startsWith("menu:setactive:")) {
         await handleSetActive(interaction, customId.slice(15));
+        return;
+    }
+
+    if (customId.startsWith("menu:img:")) {
+        await handleSetImage(interaction, customId.slice(9));
+        return;
+    }
+
+    if (customId.startsWith("menu:imgdel:")) {
+        await handleRemoveImage(interaction, customId.slice(12));
+        return;
+    }
+
+    if (customId.startsWith("menu:imgcancel:")) {
+        await handleCancelUpload(interaction, customId.slice(15));
         return;
     }
 
@@ -315,6 +430,11 @@ async function handleSelectMenu(interaction) {
 
     if (interaction.customId === "menu:pickchar") {
         await handlePickCharacter(interaction);
+        return;
+    }
+
+    if (interaction.customId === "menu:viewchar") {
+        await showCharacterDetail(interaction, interaction.values[0]);
         return;
     }
 

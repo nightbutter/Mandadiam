@@ -10,6 +10,7 @@ const battleAccept = require("./battle-accept");
 const battleStatus = require("./battle-status");
 const battleAttack = require("./battle-attack");
 const battleForfeit = require("./battle-forfeit");
+const characterImage = require("./character-image");
 const rpg = require("./rpg");
 
 const commands = new Collection();
@@ -26,6 +27,7 @@ for (const command of [
     battleStatus,
     battleAttack,
     battleForfeit,
+    characterImage,
     rpg
 ]) {
     commands.set(command.data.name, command);

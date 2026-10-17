@@ -38,6 +38,10 @@ BEGIN
     END IF;
 END $$;
 
+-- Phase 4.3: character portraits. Nullable — existing rows get the
+-- default no-image behavior. Stores a URL only, never binary data.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS image_url TEXT;
+
 CREATE TABLE IF NOT EXISTS battles (
     id               BIGSERIAL PRIMARY KEY,
     player_one_id    BIGINT NOT NULL REFERENCES players (id) ON DELETE RESTRICT,

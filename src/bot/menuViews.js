@@ -15,6 +15,15 @@ const { RULES } = require("../services/characterService");
 
 const COLOR = 0x5865f2;
 
+// Shown when a character has no image_url — Discord's own default
+// avatar asset (stable public CDN URL, no upload required).
+const DEFAULT_PORTRAIT = "https://cdn.discordapp.com/embed/avatars/0.png";
+
+// Rows use image_url; battle-shaped characters use imageUrl.
+function portraitOf(character) {
+    return character?.image_url ?? character?.imageUrl ?? DEFAULT_PORTRAIT;
+}
+
 function menuButton(customId, label, emoji, style = ButtonStyle.Primary) {
     const button = new ButtonBuilder()
         .setCustomId(customId)
@@ -43,7 +52,12 @@ function mainMenuView(profile) {
     const embed = new EmbedBuilder()
         .setTitle("🎮 Mandadiam — Main Menu")
         .setColor(COLOR)
-        .setDescription(description);
+        .setDescription(description)
+        .setThumbnail(
+            profile?.activeCharacter
+                ? portraitOf(profile.activeCharacter)
+                : null
+        );
 
     const rows = [
         new ActionRowBuilder().addComponents(
@@ -109,6 +123,9 @@ function profileView(profile, characterCount) {
                     : "none",
                 inline: false
             }
+        )
+        .setThumbnail(
+            activeCharacter ? portraitOf(activeCharacter) : null
         );
 
     return {
@@ -149,17 +166,111 @@ function charactersView(player, characters) {
         );
     }
 
+    const components = [];
+
+    if (characters.length) {
+        components.push(
+            new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId("menu:viewchar")
+                    .setPlaceholder("View a character's details & portrait")
+                    .addOptions(
+                        characters.slice(0, 25).map(character => ({
+                            label: character.name,
+                            value: String(character.id),
+                            description:
+                                `HP ${character.max_hp} · ATK ` +
+                                `${character.atk} · DEF ${character.def}` +
+                                ` · SPE ${character.spe}`
+                        }))
+                    )
+            )
+        );
+    }
+
+    components.push(
+        new ActionRowBuilder().addComponents(
+            menuButton("menu:create", "Create Character", "✨"),
+            menuButton(
+                "menu:select", "Select Active", "🎯",
+                ButtonStyle.Success
+            ).setDisabled(!characters.length),
+            menuButton("menu:main", "Back to Menu", "⬅️",
+                ButtonStyle.Secondary)
+        )
+    );
+
+    return { embeds: [embed], components };
+}
+
+// Full detail view for one character — portrait, stats, and the
+// portrait management buttons. `isActive` marks the current pick.
+function characterDetailView(character, activeCharacterId) {
+    const embed = new EmbedBuilder()
+        .setTitle(
+            `🛡️ ${character.name}` +
+            (character.id === activeCharacterId ? "  *(active)*" : "")
+        )
+        .setColor(COLOR)
+        .setImage(portraitOf(character))
+        .addFields(
+            { name: "HP", value: String(character.max_hp), inline: true },
+            { name: "ATK", value: String(character.atk), inline: true },
+            { name: "DEF", value: String(character.def), inline: true },
+            { name: "SPE", value: String(character.spe), inline: true }
+        );
+
+    const hasImage = Boolean(character.image_url);
+
     return {
         embeds: [embed],
         components: [
             new ActionRowBuilder().addComponents(
-                menuButton("menu:create", "Create Character", "✨"),
                 menuButton(
-                    "menu:select", "Select Active", "🎯",
-                    ButtonStyle.Success
-                ).setDisabled(!characters.length),
-                menuButton("menu:main", "Back to Menu", "⬅️",
+                    `menu:img:${character.id}`,
+                    hasImage ? "Change Image" : "Set Image", "🖼️"
+                ),
+                menuButton(
+                    `menu:imgdel:${character.id}`,
+                    "Remove Image", "🗑️", ButtonStyle.Danger
+                ).setDisabled(!hasImage),
+                menuButton(
+                    `menu:setactive:${character.id}`,
+                    "Select Active", "🎯", ButtonStyle.Success
+                ).setDisabled(character.id === activeCharacterId)
+            ),
+            new ActionRowBuilder().addComponents(
+                menuButton("menu:chars", "Back to Characters", "⬅️",
+                    ButtonStyle.Secondary),
+                menuButton("menu:main", "Main Menu", "🏠",
                     ButtonStyle.Secondary)
+            )
+        ]
+    };
+}
+
+// Explains the upload step while a session is pending.
+function uploadPromptView(character) {
+    return {
+        embeds: [
+            new EmbedBuilder()
+                .setTitle(`🖼️ Upload portrait — ${character.name}`)
+                .setColor(COLOR)
+                .setDescription(
+                    "**Send the image as a message in this channel** " +
+                    "within 90 seconds.\n\n" +
+                    "PNG, JPEG, or WebP — max 5 MB.\n\n" +
+                    "_The image is hosted by Discord's CDN and stays " +
+                    "available while the message exists — it is not " +
+                    "permanent storage._"
+                )
+        ],
+        components: [
+            new ActionRowBuilder().addComponents(
+                menuButton(
+                    `menu:imgcancel:${character.id}`,
+                    "Cancel Upload", "❌", ButtonStyle.Secondary
+                )
             )
         ]
     };
@@ -285,10 +396,14 @@ function createCharacterModal() {
 }
 
 module.exports = {
+    DEFAULT_PORTRAIT,
+    portraitOf,
     mainMenuView,
     notRegisteredView,
     profileView,
     charactersView,
+    characterDetailView,
+    uploadPromptView,
     selectCharacterView,
     battleView,
     helpView,
