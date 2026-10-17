@@ -1,5 +1,6 @@
 const playerRepository = require("../database/repositories/playerRepository");
 const characterRepository = require("../database/repositories/characterRepository");
+const { toBattleCharacter } = require("../game/services/battleService");
 
 // Character management for Discord commands. The invoking user's own
 // player row is always resolved from their Discord snowflake — callers
@@ -120,8 +121,33 @@ async function selectCharacter(discordId, name) {
     return { ok: true, character };
 }
 
+// Loads the player's active character converted to combat-engine shape
+// (hp = max_hp, cost = 0). Used when starting a battle from Discord.
+async function getActiveBattleCharacter(discordId) {
+    const player = await playerRepository.findByDiscordId(discordId);
+
+    if (!player) {
+        return { ok: false, error: "not_registered" };
+    }
+
+    if (!player.active_character_id) {
+        return { ok: false, error: "no_active_character" };
+    }
+
+    const character = await characterRepository.findById(
+        player.active_character_id
+    );
+
+    if (!character) {
+        return { ok: false, error: "no_active_character" };
+    }
+
+    return { ok: true, character: toBattleCharacter(character) };
+}
+
 module.exports = {
     LIMITS,
+    getActiveBattleCharacter,
     validateCharacterInput,
     createCharacter,
     listCharacters,
