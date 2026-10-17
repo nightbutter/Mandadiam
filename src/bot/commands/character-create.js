@@ -53,19 +53,20 @@ module.exports = {
             spe: interaction.options.getInteger("spe")
         });
 
-        const replies = {
-            not_registered:
-                "You are not registered yet — use /register first.",
-            duplicate_name:
-                "You already have a character with that name.",
-            invalid: `Invalid stats: ${result.details.join(", ")}`
-        };
-
         if (!result.ok) {
-            await interaction.reply({
-                content: replies[result.error],
-                ephemeral: true
-            });
+            const replies = {
+                not_registered:
+                    "You are not registered yet — use /register first.",
+                duplicate_name:
+                    "You already have a character with that name."
+            };
+
+            const content = result.error === "invalid"
+                ? `Invalid stats: ${result.details.join(", ")}`
+                : replies[result.error] ??
+                    "Something went wrong creating that character.";
+
+            await interaction.reply({ content, ephemeral: true });
             return;
         }
 
