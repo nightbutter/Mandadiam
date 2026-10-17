@@ -10,17 +10,18 @@ module.exports = {
             return;
         }
 
+        await interaction.deferReply({ ephemeral: true });
+
         const { registerPlayer } = require("../../services/playerService");
         const { registered } = await registerPlayer(
             interaction.user.id,
             interaction.user.username
         );
 
-        await interaction.reply({
+        await interaction.editReply({
             content: registered
                 ? `Registered — welcome, ${interaction.user.username}!`
-                : "You are already registered.",
-            ephemeral: true
+                : "You are already registered."
         });
     }
 };

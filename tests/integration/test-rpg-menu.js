@@ -50,6 +50,12 @@ function mockComponent({ customId, userId, ownerId }) {
         },
         reply: async p => calls.replies.push(p),
         update: async p => calls.updates.push(p),
+        deferUpdate: async () => {
+            calls.deferred = (calls.deferred ?? 0) + 1;
+        },
+        // editReply after deferUpdate targets the same message —
+        // record it as an update so existing assertions hold.
+        editReply: async p => calls.updates.push(p),
         showModal: async m => calls.modals.push(m),
         followUp: async p => calls.replies.push(p)
     };

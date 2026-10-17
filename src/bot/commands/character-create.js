@@ -46,6 +46,8 @@ module.exports = {
             return;
         }
 
+        await interaction.deferReply({ ephemeral: true });
+
         const { createCharacter } = require("../../services/characterService");
         const result = await createCharacter(interaction.user.id, {
             name: interaction.options.getString("name"),
@@ -68,18 +70,17 @@ module.exports = {
                 : replies[result.error] ??
                     "Something went wrong creating that character.";
 
-            await interaction.reply({ content, ephemeral: true });
+            await interaction.editReply({ content });
             return;
         }
 
         const c = result.character;
 
-        await interaction.reply({
+        await interaction.editReply({
             content:
                 `Created **${c.name}** — HP ${c.max_hp}, ATK ${c.atk}, ` +
                 `DEF ${c.def}, SPE ${c.spe}. ` +
-                "Select it with /character-select.",
-            ephemeral: true
+                "Select it with /character-select."
         });
     }
 };

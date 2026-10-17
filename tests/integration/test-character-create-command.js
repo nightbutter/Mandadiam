@@ -12,6 +12,7 @@ const P1 = `${TAG}_p1`;
 
 function mockInteraction(userId, options = {}) {
     const replies = [];
+    const defers = [];
 
     return {
         interaction: {
@@ -20,9 +21,12 @@ function mockInteraction(userId, options = {}) {
                 getString: n => options.strings?.[n] ?? null,
                 getInteger: n => options.integers?.[n] ?? null
             },
-            reply: async r => replies.push(r)
+            reply: async r => replies.push(r),
+            deferReply: async p => defers.push(p),
+            editReply: async r => replies.push(r)
         },
-        replies
+        replies,
+        defers
     };
 }
 
@@ -49,7 +53,10 @@ function test(title, result) {
             "successful creation replies Created",
             ok.replies[0]?.content.startsWith("Created **Noctis**")
         );
-        test("reply is ephemeral", ok.replies[0].ephemeral === true);
+        test(
+            "reply is ephemeral (via deferred reply)",
+            ok.defers[0]?.ephemeral === true
+        );
 
         // 2. Duplicate name returns a friendly error.
         const dup = mockInteraction(P1, VALID);

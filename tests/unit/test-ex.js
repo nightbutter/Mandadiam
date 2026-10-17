@@ -390,7 +390,17 @@ async function run() {
             channelId: session.channelId
         });
         const before = session.battle.turnNumber;
-        await handleButton(confirm);
+        // Deterministic rolls — a defender d20=20 would reflect the
+        // EX and grant the attacker +10 damage-received EX, which is
+        // correct behavior but not what this assertion checks.
+        const rolls = [0.75, 0.4, 0.5];
+        const realRandom = Math.random;
+        Math.random = () => rolls.length ? rolls.shift() : 0.5;
+        try {
+            await handleButton(confirm);
+        } finally {
+            Math.random = realRandom;
+        }
         const hero = session.battle.characters[0];
         assert.equal(hero.ex, 0);
         assert.equal(session.battle.turnNumber, before + 1);

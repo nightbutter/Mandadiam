@@ -347,10 +347,15 @@ async function handlePickCharacter(interaction) {
 
 async function handlePickOpponent(interaction) {
     const opponent = interaction.users.first();
+
+    // Acknowledge the selection before the character lookups —
+    // prepareChallenge runs two sequential database calls.
+    await interaction.deferUpdate();
+
     const prepared = await prepareChallenge(interaction, opponent);
 
     if (!prepared.ok) {
-        await interaction.update({
+        await interaction.editReply({
             embeds: [
                 new EmbedBuilder()
                     .setTitle("⚔️ Challenge failed")
@@ -366,7 +371,7 @@ async function handlePickOpponent(interaction) {
         message, prepared.challenge, interaction.channelId
     );
 
-    await interaction.update({
+    await interaction.editReply({
         embeds: [
             new EmbedBuilder()
                 .setTitle("⚔️ Challenge sent")

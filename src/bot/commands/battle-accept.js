@@ -34,6 +34,10 @@ module.exports = {
             return;
         }
 
+        // Defer before loading both characters — two sequential
+        // database calls can exceed the ack window.
+        await interaction.deferReply({ ephemeral: true });
+
         // Clear the buttons on the original challenge message, if any.
         if (accepted.challenge.messageId) {
             interaction.channel.messages
@@ -52,11 +56,10 @@ module.exports = {
         );
 
         if (!first.ok || !second.ok) {
-            await interaction.reply({
+            await interaction.editReply({
                 content:
                     "Couldn't start — a player no longer has an active " +
-                    "character. Issue a new challenge.",
-                ephemeral: true
+                    "character. Issue a new challenge."
             });
             return;
         }
@@ -68,9 +71,8 @@ module.exports = {
         );
 
         if (!started.ok) {
-            await interaction.reply({
-                content: "Couldn't start — a battle is already running here.",
-                ephemeral: true
+            await interaction.editReply({
+                content: "Couldn't start — a battle is already running here."
             });
             return;
         }
@@ -88,9 +90,12 @@ module.exports = {
             "moves first"
         );
 
-        await interaction.reply(
+        // The acceptance announce is public; the deferred reply is
+        // the private receipt.
+        await interaction.channel.send(
             `⚔️ <@${opponentId}> accepted — battle started!`
         );
+        await interaction.editReply("Battle started!");
 
         await sendBattlePanel(
             interaction.channel, session,

@@ -15,6 +15,8 @@ module.exports = {
             return;
         }
 
+        await interaction.deferReply({ ephemeral: true });
+
         const { selectCharacter } = require("../../services/characterService");
         const result = await selectCharacter(
             interaction.user.id,
@@ -30,16 +32,14 @@ module.exports = {
         };
 
         if (!result.ok) {
-            await interaction.reply({
-                content: replies[result.error],
-                ephemeral: true
+            await interaction.editReply({
+                content: replies[result.error]
             });
             return;
         }
 
-        await interaction.reply({
-            content: `**${result.character.name}** is now your active character.`,
-            ephemeral: true
+        await interaction.editReply({
+            content: `**${result.character.name}** is now your active character.`
         });
     }
 };

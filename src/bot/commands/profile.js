@@ -10,13 +10,14 @@ module.exports = {
             return;
         }
 
+        await interaction.deferReply({ ephemeral: true });
+
         const { getProfile } = require("../../services/playerService");
         const profile = await getProfile(interaction.user.id);
 
         if (!profile) {
-            await interaction.reply({
-                content: "You are not registered yet — use /register first.",
-                ephemeral: true
+            await interaction.editReply({
+                content: "You are not registered yet — use /register first."
             });
             return;
         }
@@ -37,6 +38,6 @@ module.exports = {
             lines.push("Active character: none — use /character-select");
         }
 
-        await interaction.reply({ content: lines.join("\n"), ephemeral: true });
+        await interaction.editReply({ content: lines.join("\n") });
     }
 };

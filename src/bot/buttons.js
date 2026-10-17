@@ -49,6 +49,11 @@ async function handleChallengeAccept(interaction) {
         return;
     }
 
+    // Acknowledge the button before loading both characters — two
+    // sequential database calls can exceed the ack window, which is
+    // how a clicked Accept used to die silently with 10062.
+    await interaction.deferUpdate();
+
     const { getActiveBattleCharacter } =
         require("../services/characterService");
     const { challengerId, opponentId } = accepted.challenge;
@@ -57,7 +62,7 @@ async function handleChallengeAccept(interaction) {
     const second = await getActiveBattleCharacter(opponentId);
 
     if (!first.ok || !second.ok) {
-        await interaction.update({
+        await interaction.editReply({
             content:
                 "Couldn't start — a player no longer has an active " +
                 "character.",
@@ -73,7 +78,7 @@ async function handleChallengeAccept(interaction) {
     );
 
     if (!started.ok) {
-        await interaction.update({
+        await interaction.editReply({
             content: "Couldn't start — a battle is already running here.",
             components: []
         });
@@ -83,7 +88,7 @@ async function handleChallengeAccept(interaction) {
     const { session, firstTurn } = started;
     const initiative = session.battle.initiative;
 
-    await interaction.update({
+    await interaction.editReply({
         content:
             `⚔️ <@${opponentId}> accepted the challenge — ` +
             "battle started!",

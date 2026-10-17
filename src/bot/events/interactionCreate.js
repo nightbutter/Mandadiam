@@ -1,17 +1,38 @@
 const { Events, MessageFlags } = require("discord.js");
 const { commands } = require("../commands");
 
-// Shared failure reply for component/modal interactions.
-async function safeFail(interaction) {
-    const reply = {
+// Logs the real failure, then tries to inform the user using the
+// response method that matches the interaction's actual ack state:
+//   not acked          → reply (ephemeral)
+//   deferred, not sent → editReply
+//   already replied    → followUp
+// The recovery send is itself wrapped — if the token has expired
+// (10062) or the interaction was already acknowledged (40060) the
+// failure is logged and swallowed so error handling can never turn
+// a handler error into an unhandled rejection that crashes the bot.
+// err objects logged here are discord.js/app errors only — no
+// interaction tokens or secrets are included.
+async function reportError(interaction, context, err) {
+    console.error(`${context} failed:`, err);
+
+    const payload = {
         content: "Something went wrong with that action.",
         ephemeral: true
     };
 
-    if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(reply);
-    } else {
-        await interaction.reply(reply);
+    try {
+        if (interaction.replied) {
+            await interaction.followUp(payload);
+        } else if (interaction.deferred) {
+            await interaction.editReply(payload);
+        } else {
+            await interaction.reply(payload);
+        }
+    } catch (ackError) {
+        console.error(
+            `${context} — could not report error to user ` +
+            `(code ${ackError.code ?? "unknown"})`
+        );
     }
 }
 
@@ -24,11 +45,10 @@ module.exports = {
                 const { handleButton } = require("../buttons");
                 await handleButton(interaction);
             } catch (err) {
-                console.error(
-                    `Button ${interaction.customId} failed:`, err
+                await reportError(
+                    interaction,
+                    `Button ${interaction.customId}`, err
                 );
-
-                await safeFail(interaction);
             }
             return;
         }
@@ -43,10 +63,10 @@ module.exports = {
                     await handleSelectMenu(interaction);
                 }
             } catch (err) {
-                console.error(
-                    `Select menu ${interaction.customId} failed:`, err
+                await reportError(
+                    interaction,
+                    `Select menu ${interaction.customId}`, err
                 );
-                await safeFail(interaction);
             }
             return;
         }
@@ -56,10 +76,10 @@ module.exports = {
                 const { handleModalSubmit } = require("../menu");
                 await handleModalSubmit(interaction);
             } catch (err) {
-                console.error(
-                    `Modal ${interaction.customId} failed:`, err
+                await reportError(
+                    interaction,
+                    `Modal ${interaction.customId}`, err
                 );
-                await safeFail(interaction);
             }
             return;
         }
@@ -77,18 +97,10 @@ module.exports = {
         try {
             await command.execute(interaction);
         } catch (err) {
-            console.error(`Command /${interaction.commandName} failed:`, err);
-
-            const reply = {
-                content: "Something went wrong running that command.",
-                flags: MessageFlags.Ephemeral
-            };
-
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp(reply);
-            } else {
-                await interaction.reply(reply);
-            }
+            await reportError(
+                interaction,
+                `Command /${interaction.commandName}`, err
+            );
         }
     }
 };

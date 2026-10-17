@@ -21,7 +21,11 @@ function mockButton({ customId, userId, channelId = "c1" }) {
             }
         },
         reply: async payload => calls.replies.push(payload),
-        update: async payload => calls.updates.push(payload)
+        update: async payload => calls.updates.push(payload),
+        deferUpdate: async () => {
+            calls.deferred = (calls.deferred ?? 0) + 1;
+        },
+        editReply: async payload => calls.updates.push(payload)
     };
 }
 
