@@ -61,18 +61,31 @@ function mainMenuView(profile) {
                 : null
         );
 
-    const rows = [
-        new ActionRowBuilder().addComponents(
-            menuButton("menu:profile", "Profile", "👤"),
-            menuButton("menu:chars", "My Characters", "🛡️"),
-            menuButton("menu:create", "Create Character", "✨")
-        ),
-        new ActionRowBuilder().addComponents(
-            menuButton("menu:battle", "Battle", "⚔️", ButtonStyle.Success),
-            menuButton("menu:help", "Help / Rules", "📖",
-                ButtonStyle.Secondary)
-        )
-    ];
+    // Unregistered users get the explicit Register entry point the
+    // embed text references — plus Help. The rest of the menu would
+    // only bounce them to the not-registered view anyway.
+    const rows = profile
+        ? [
+            new ActionRowBuilder().addComponents(
+                menuButton("menu:profile", "Profile", "👤"),
+                menuButton("menu:chars", "My Characters", "🛡️"),
+                menuButton("menu:create", "Create Character", "✨")
+            ),
+            new ActionRowBuilder().addComponents(
+                menuButton("menu:battle", "Battle", "⚔️",
+                    ButtonStyle.Success),
+                menuButton("menu:help", "Help / Rules", "📖",
+                    ButtonStyle.Secondary)
+            )
+        ]
+        : [
+            new ActionRowBuilder().addComponents(
+                menuButton("menu:register", "Register", "✅",
+                    ButtonStyle.Success),
+                menuButton("menu:help", "Help / Rules", "📖",
+                    ButtonStyle.Secondary)
+            )
+        ];
 
     return { embeds: [embed], components: rows };
 }
@@ -361,8 +374,9 @@ function helpView() {
             {
                 name: "Slash commands (fallback)",
                 value:
-                    "`/register` `/profile` `/characters` " +
+                    "`/rpg` `/register` `/profile` `/characters` " +
                     "`/character-create` `/character-select` " +
+                    "`/character-image` " +
                     "`/battle-challenge` `/battle-accept` `/battle-status` " +
                     "`/battle-attack` `/battle-forfeit`"
             }

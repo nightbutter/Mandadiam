@@ -1,10 +1,12 @@
 const assert = require("node:assert/strict");
 const {
     ownsDashboard,
+    mainMenuView,
     handleMenuButton,
     handleSelectMenu,
     handleModalSubmit
 } = require("../../src/bot/menu");
+const menuViews = require("../../src/bot/menuViews");
 const uiSessions = require("../../src/bot/uiSessions");
 const { pool } = require("../../src/database/db");
 
@@ -331,6 +333,179 @@ async function run() {
         await handleSelectMenu(wrong);
         assert(wrong.calls.replies[0].content.includes("someone else"));
         console.log("PASS: select menu enforces dashboard ownership");
+    }
+
+    // --- register button on the main menu (reported bug) ----------
+
+    const customIdsOf = view =>
+        view.components.flatMap(row =>
+            row.components.map(c => c.data.custom_id));
+
+    {
+        const view = mainMenuView(null);
+        const ids = customIdsOf(view);
+        assert(
+            ids.includes("menu:register"),
+            `unregistered menu lacks Register button: ${ids}`
+        );
+        assert(
+            !ids.includes("menu:battle"),
+            "unregistered menu should not show Battle"
+        );
+        console.log(
+            "PASS: new player sees Register on the main menu"
+        );
+    }
+
+    {
+        const view = mainMenuView({
+            player: { username: "reg_u" },
+            activeCharacter: null
+        });
+        const ids = customIdsOf(view);
+        assert(!ids.includes("menu:register"));
+        assert(ids.includes("menu:battle"));
+        console.log(
+            "PASS: registered player gets the full menu, no Register"
+        );
+    }
+
+    {
+        const ids = customIdsOf(menuViews.notRegisteredView());
+        assert(ids.includes("menu:register"));
+        console.log("PASS: notRegisteredView still offers Register");
+    }
+
+    {
+        // Full click path: register a ghost user, verify the view
+        // update shows the registered menu, then clean up.
+        const intr = mockComponent({
+            customId: "menu:register", userId: "ghost_reg"
+        });
+        await handleMenuButton(intr);
+        assert.equal(intr.calls.updates.length, 1);
+        const ids = customIdsOf(intr.calls.updates[0]);
+        assert(
+            intr.calls.updates[0].embeds[0].data.description
+                .includes("Registered")
+        );
+        assert(ids.includes("menu:battle"));
+        assert(!ids.includes("menu:register"));
+        console.log(
+            "PASS: register click creates player + shows full menu"
+        );
+
+        // Double-click must not error — registration is idempotent.
+        const again = mockComponent({
+            customId: "menu:register", userId: "ghost_reg"
+        });
+        await handleMenuButton(again);
+        assert.equal(again.calls.updates.length, 1);
+        console.log("PASS: duplicate register click is idempotent");
+
+        await pool.query(
+            `DELETE FROM players WHERE discord_id = 'ghost_reg'`
+        );
+
+        // Register belongs to the dashboard owner only.
+        const stranger = mockComponent({
+            customId: "menu:register", userId: "u9", ownerId: "u1"
+        });
+        await handleMenuButton(stranger);
+        assert(
+            stranger.calls.replies[0].content.includes("someone else")
+        );
+        console.log("PASS: register click enforces ownership");
+    }
+
+    // --- customId coverage sweep -----------------------------------
+    // Every interactive component emitted by the views must route to
+    // a real handler — no "Unknown menu action" dead ends.
+
+    {
+        const views = [
+            mainMenuView(null),
+            mainMenuView({
+                player: { username: "x" }, activeCharacter: null
+            }),
+            menuViews.notRegisteredView(),
+            menuViews.profileView(
+                { player: { username: "x", created_at: new Date() },
+                  activeCharacter: null },
+                0
+            ),
+            menuViews.charactersView(
+                { active_character_id: 1 },
+                [{ id: 1, name: "A", max_hp: 10, atk: 1, def: 1,
+                   spe: 1 }]
+            ),
+            menuViews.characterDetailView(
+                { id: 1, name: "A", max_hp: 10, atk: 1, def: 1,
+                  spe: 1, image_url: null },
+                2
+            ),
+            menuViews.selectCharacterView(
+                [{ id: 1, name: "A", max_hp: 10, atk: 1, def: 1,
+                   spe: 1 }]
+            ),
+            menuViews.battleView(),
+            menuViews.helpView()
+        ];
+
+        const allComponents = views.flatMap(view =>
+            view.components.flatMap(row => row.components));
+
+        // discord.js ComponentType: Button=2, StringSelect=3,
+        // UserSelect=5, RoleSelect=6, MentionableSelect=7,
+        // ChannelSelect=8.
+        const buttonIds = new Set(
+            allComponents
+                .filter(c => c.data.type === 2)
+                .map(c => c.data.custom_id)
+                .filter(id => id.startsWith("menu:"))
+        );
+        const selectIds = new Set(
+            allComponents
+                .filter(c => c.data.type === 3 || c.data.type === 5)
+                .map(c => c.data.custom_id)
+        );
+
+        for (const id of buttonIds) {
+            const intr = mockComponent({
+                customId: id.startsWith("menu:setactive")
+                    ? "menu:setactive:999999"
+                    : id.startsWith("menu:imgdel")
+                        ? "menu:imgdel:999999"
+                        : id.startsWith("menu:img:")
+                            ? "menu:img:999999"
+                            : id,
+                userId: "ghost_sweep"
+            });
+            await handleMenuButton(intr);
+            const bad = intr.calls.replies.find(
+                r => r.content?.includes("Unknown menu action")
+            );
+            assert(!bad, `button ${id} routed to nothing`);
+        }
+        console.log(
+            `PASS: all ${buttonIds.size} menu buttons route to handlers`
+        );
+
+        for (const id of selectIds) {
+            const sel = mockSelect({
+                customId: id, userId: "ghost_sweep",
+                values: ["999999"],
+                users: [{ id: "u2", bot: false }]
+            });
+            await handleSelectMenu(sel);
+            const bad = sel.calls.replies.find(
+                r => r.content?.includes("Unknown menu action")
+            );
+            assert(!bad, `select ${id} routed to nothing`);
+        }
+        console.log(
+            `PASS: all ${selectIds.size} select menus route to handlers`
+        );
     }
 
     console.log("\nMenu tests passed.");

@@ -260,6 +260,51 @@ function mockSelect(userId, customId, extra = {}) {
 
         bs.cancelChallenge(CHANNEL, P1);
 
+        // --- new-player registration via the dashboard button ---
+
+        const P3 = `${TAG}_p3`;
+        const regBtn = mockComponent({
+            customId: "menu:register", userId: P3
+        });
+        await handleMenuButton(regBtn);
+        test(
+            "register button creates the player",
+            regBtn.calls.updates.length === 1 &&
+            regBtn.calls.updates[0].embeds[0].data.description
+                .includes("Registered")
+        );
+
+        const p3Profile = await playerService.getProfile(P3);
+        test(
+            "player row persisted",
+            p3Profile?.player.discord_id === P3
+        );
+
+        const regIds = regBtn.calls.updates[0].components
+            .flatMap(r => r.components)
+            .map(c => c.data.custom_id);
+        test(
+            "post-register view is the full menu",
+            regIds.includes("menu:battle") &&
+            !regIds.includes("menu:register")
+        );
+
+        const dup = mockComponent({
+            customId: "menu:register", userId: P3
+        });
+        await handleMenuButton(dup);
+        test(
+            "re-registering is a safe no-op",
+            dup.calls.updates.length === 1
+        );
+
+        const { rows: p3Count } = await pool.query(
+            `SELECT COUNT(*)::int AS n FROM players
+             WHERE discord_id = $1`,
+            [P3]
+        );
+        test("exactly one player row", p3Count[0].n === 1);
+
         console.log("\nRPG menu integration tests passed.");
     } finally {
         const session = bs.getSession(CHANNEL);
