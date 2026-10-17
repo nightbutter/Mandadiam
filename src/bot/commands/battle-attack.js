@@ -6,8 +6,12 @@ module.exports = {
         .setDescription("Make a normal attack on your turn"),
     async execute(interaction) {
         const battleService = require("../../game/services/battleService");
-        const { formatAttackReport, mentionOwner } =
-            require("../battleFormat");
+        const {
+            formatAttackReport,
+            mentionOwner,
+            pushLog
+        } = require("../battleFormat");
+        const { updateBattlePanel } = require("../battlePanel");
 
         const session = battleService.getSessionForPlayer(
             interaction.user.id
@@ -43,9 +47,25 @@ module.exports = {
 
         const report = formatAttackReport(session, outcome.result);
 
+        pushLog(
+            session,
+            `⚔️ **${outcome.result.attacker}** → ` +
+            `**${outcome.result.defender}**: ` +
+            `${outcome.result.damage} dmg` +
+            (outcome.result.outcome === "reflected" ? " (reflected)" : "") +
+            (outcome.result.outcome === "double_attack" ? " (double)" : "")
+        );
+
         if (outcome.finished) {
             const winnerChar = session.battle.characters.find(
                 c => c.name === outcome.winner
+            );
+
+            pushLog(
+                session,
+                `🏆 **${outcome.winner ?? "Nobody"}** ` +
+                `${winnerChar ? mentionOwner(session, winnerChar) : ""} ` +
+                "wins!"
             );
 
             await interaction.reply(
@@ -53,16 +73,27 @@ module.exports = {
                 `${winnerChar ? mentionOwner(session, winnerChar) : ""} ` +
                 "wins the battle!"
             );
-            return;
+        } else {
+            const nextPlayer = session.players.find(
+                p => p.character.name === outcome.next.character
+            );
+
+            await interaction.reply(
+                `${report}\nNext: <@${nextPlayer.discordId}>'s turn — ` +
+                "/battle-attack or the Attack button"
+            );
         }
 
-        const nextPlayer = session.players.find(
-            p => p.character.name === outcome.next.character
-        );
+        // Keep the persistent panel in sync if one exists — the
+        // battle may live in a different channel than this command.
+        const panelChannel = session.channelId === interaction.channelId
+            ? interaction.channel
+            : await interaction.client.channels
+                .fetch(session.channelId)
+                .catch(() => null);
 
-        await interaction.reply(
-            `${report}\nNext: <@${nextPlayer.discordId}>'s turn — ` +
-            "/battle-attack"
-        );
+        if (panelChannel) {
+            await updateBattlePanel(panelChannel, session, report);
+        }
     }
 };

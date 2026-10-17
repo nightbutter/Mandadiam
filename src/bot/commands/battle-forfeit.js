@@ -6,6 +6,8 @@ module.exports = {
         .setDescription("Forfeit your active battle or withdraw a challenge"),
     async execute(interaction) {
         const battleService = require("../../game/services/battleService");
+        const { pushLog } = require("../battleFormat");
+        const { updateBattlePanel } = require("../battlePanel");
 
         const session = battleService.getSessionForPlayer(
             interaction.user.id
@@ -16,12 +18,29 @@ module.exports = {
                 session, interaction.user.id
             );
 
+            pushLog(
+                session,
+                `🏳️ **${loser.character.name}** ` +
+                `(<@${loser.discordId}>) forfeits — ` +
+                `**${winner.character.name}** wins!`
+            );
+
             await interaction.reply(
                 `🏳️ **${loser.character.name}** ` +
                 `(<@${loser.discordId}>) forfeits — ` +
                 `**${winner.character.name}** ` +
                 `(<@${winner.discordId}>) wins!`
             );
+
+            const panelChannel = session.channelId === interaction.channelId
+                ? interaction.channel
+                : await interaction.client.channels
+                    .fetch(session.channelId)
+                    .catch(() => null);
+
+            if (panelChannel) {
+                await updateBattlePanel(panelChannel, session);
+            }
             return;
         }
 
@@ -35,6 +54,15 @@ module.exports = {
             );
 
             if (cancelled.ok) {
+                // Clear buttons on the original challenge message.
+                if (pending.messageId &&
+                    pending.channelId === interaction.channelId) {
+                    interaction.channel.messages
+                        .fetch(pending.messageId)
+                        .then(msg => msg.edit({ components: [] }))
+                        .catch(() => {});
+                }
+
                 await interaction.reply(
                     cancelled.role === "challenger"
                         ? `<@${interaction.user.id}> withdrew their challenge.`

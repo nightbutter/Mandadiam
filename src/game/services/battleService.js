@@ -122,6 +122,19 @@ function getPendingChallengeForPlayer(discordId) {
     return null;
 }
 
+// Removes a challenge only when it has actually expired — used by the
+// challenge-message timeout to disable stale buttons.
+function expireChallenge(channelId) {
+    const challenge = pendingChallenges.get(channelId);
+
+    if (!challenge || !challengeExpired(challenge)) {
+        return false;
+    }
+
+    pendingChallenges.delete(channelId);
+    return true;
+}
+
 // Cancels a live challenge — the challenger withdraws, the opponent
 // declines. Either removes the pending entry.
 function cancelChallenge(channelId, userId) {
@@ -162,7 +175,10 @@ function startBattle(channelId, playerOne, playerTwo, options = {}) {
     const session = {
         channelId,
         battle,
-        players: [playerOne, playerTwo]
+        players: [playerOne, playerTwo],
+        // Discord layer attaches panelMessageId and appends short lines
+        // to log for the battle panel; the engine ignores both.
+        log: []
     };
 
     battlesByChannel.set(channelId, session);
@@ -264,6 +280,7 @@ module.exports = {
     isPlayerBusy,
     issueChallenge,
     acceptChallenge,
+    expireChallenge,
     cancelChallenge,
     getPendingChallenge,
     getPendingChallengeForPlayer,

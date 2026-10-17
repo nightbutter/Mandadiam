@@ -1,5 +1,118 @@
 // Shared rendering for battle commands — plain markdown, consistent
 // with the project's existing command replies.
+const {
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
+} = require("discord.js");
+
+const MAX_LOG_LINES = 6;
+
+function pushLog(session, line) {
+    session.log.push(line);
+
+    if (session.log.length > MAX_LOG_LINES) {
+        session.log.shift();
+    }
+}
+
+function hpBar(current, max) {
+    const width = 10;
+    const filled = Math.round(
+        (Math.max(0, current) / Math.max(1, max)) * width
+    );
+    return "▰".repeat(filled) + "▱".repeat(width - filled);
+}
+
+function costPips(cost) {
+    return "●".repeat(cost) + "○".repeat(Math.max(0, 6 - cost));
+}
+
+function characterField(session, character) {
+    return {
+        name:
+            `${character.name} — ` +
+            mentionOwner(session, character),
+        value:
+            `${hpBar(character.hp, character.maxHp)} ` +
+            `**${character.hp}/${character.maxHp}**\n` +
+            `COST ${costPips(character.cost)} ${character.cost}/6\n` +
+            `ATK ${character.atk} · DEF ${character.def} · ` +
+            `SPE ${character.spe}`,
+        inline: true
+    };
+}
+
+// The persistent battle panel embed. `report` is the latest action's
+// formatted text; the rolling log is always appended.
+function buildBattleEmbed(session, report = null) {
+    const { battle } = session;
+    const [a, b] = battle.characters;
+
+    const embed = new EmbedBuilder()
+        .setTitle(`⚔️ ${a.name} vs ${b.name}`)
+        .setColor(
+            battle.status === "finished" ? 0x95a5a6 : 0xe74c3c
+        )
+        .addFields(
+            characterField(session, a),
+            characterField(session, b)
+        );
+
+    const turnPlayer = session.players.find(
+        p => p.character === battle.currentTurn?.character
+    );
+
+    embed.addFields({
+        name: "Turn",
+        value: battle.status === "finished"
+            ? `Finished — winner: **${battle.winner ?? "none"}**`
+            : `#${battle.turnNumber} — <@${turnPlayer.discordId}> ` +
+                "to act",
+        inline: true
+    });
+
+    const description = [
+        report,
+        session.log.length ? session.log.join("\n") : null
+    ].filter(Boolean).join("\n\n");
+
+    if (description) {
+        embed.setDescription(description.slice(0, 4000));
+    }
+
+    embed.setFooter({
+        text: "In-memory battle — state is lost on bot restart"
+    });
+
+    return embed;
+}
+
+function buildBattleRow(session) {
+    const finished = session.battle.status === "finished";
+
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("battle:attack")
+            .setLabel("Attack")
+            .setEmoji("⚔️")
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(finished),
+        new ButtonBuilder()
+            .setCustomId("battle:refresh")
+            .setLabel("Refresh")
+            .setEmoji("🔄")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(finished),
+        new ButtonBuilder()
+            .setCustomId("battle:forfeit")
+            .setLabel("Forfeit")
+            .setEmoji("🏳️")
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(finished)
+    );
+}
 
 function ownerOf(session, character) {
     return session.players.find(p => p.character === character) ?? null;
@@ -94,5 +207,8 @@ module.exports = {
     mentionOwner,
     statLine,
     formatStatus,
-    formatAttackReport
+    formatAttackReport,
+    pushLog,
+    buildBattleEmbed,
+    buildBattleRow
 };

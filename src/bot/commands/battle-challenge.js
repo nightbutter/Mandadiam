@@ -1,4 +1,9 @@
-const { SlashCommandBuilder } = require("discord.js");
+const {
+    SlashCommandBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
+} = require("discord.js");
 const { ensureDatabase } = require("./helpers");
 
 const BUSY_MESSAGES = {
@@ -85,11 +90,42 @@ module.exports = {
 
         const seconds = Math.round(battleService.CHALLENGE_TTL_MS / 1000);
 
-        await interaction.reply(
-            `⚔️ <@${opponent.id}> — <@${interaction.user.id}> ` +
-            `(${me.character.name}) challenges you to a battle with ` +
-            `**${them.character.name}** on the line! ` +
-            `Accept with /battle-accept within ${seconds}s.`
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId("challenge:accept")
+                .setLabel("Accept")
+                .setEmoji("⚔️")
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId("challenge:decline")
+                .setLabel("Decline")
+                .setEmoji("❌")
+                .setStyle(ButtonStyle.Secondary)
         );
+
+        const message = await interaction.reply({
+            content:
+                `⚔️ <@${opponent.id}> — <@${interaction.user.id}> ` +
+                `(${me.character.name}) challenges you to a battle with ` +
+                `**${them.character.name}** on the line! ` +
+                `Accept within ${seconds}s.`,
+            components: [row],
+            fetchReply: true
+        });
+
+        // When the TTL lapses, remove the pending challenge and
+        // strip the buttons so late clicks can't consume it.
+        const channelId = interaction.channelId;
+        setTimeout(() => {
+            if (battleService.expireChallenge(channelId)) {
+                message.edit({
+                    content: "⌛ Challenge expired.",
+                    components: []
+                }).catch(() => {});
+            }
+        }, battleService.CHALLENGE_TTL_MS).unref();
+
+        // Lets slash-command accept/decline paths clear the buttons.
+        issued.challenge.messageId = message.id;
     }
 };

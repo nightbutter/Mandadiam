@@ -5,6 +5,29 @@ module.exports = {
     name: Events.InteractionCreate,
     once: false,
     async execute(interaction) {
+        if (interaction.isButton()) {
+            try {
+                const { handleButton } = require("../buttons");
+                await handleButton(interaction);
+            } catch (err) {
+                console.error(
+                    `Button ${interaction.customId} failed:`, err
+                );
+
+                const reply = {
+                    content: "Something went wrong with that action.",
+                    ephemeral: true
+                };
+
+                if (interaction.replied || interaction.deferred) {
+                    await interaction.followUp(reply);
+                } else {
+                    await interaction.reply(reply);
+                }
+            }
+            return;
+        }
+
         if (!interaction.isChatInputCommand()) {
             return;
         }

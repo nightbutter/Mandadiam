@@ -12,7 +12,8 @@ module.exports = {
 
         const characterService = require("../../services/characterService");
         const battleService = require("../../game/services/battleService");
-        const { statLine, mentionOwner } = require("../battleFormat");
+        const { sendBattlePanel } = require("../battlePanel");
+        const { pushLog } = require("../battleFormat");
 
         const accepted = battleService.acceptChallenge({
             channelId: interaction.channelId,
@@ -31,6 +32,14 @@ module.exports = {
                 ephemeral: true
             });
             return;
+        }
+
+        // Clear the buttons on the original challenge message, if any.
+        if (accepted.challenge.messageId) {
+            interaction.channel.messages
+                .fetch(accepted.challenge.messageId)
+                .then(msg => msg.edit({ components: [] }))
+                .catch(() => {});
         }
 
         const { challengerId, opponentId } = accepted.challenge;
@@ -72,17 +81,21 @@ module.exports = {
             p => p.character.name === firstTurn.character
         );
 
+        pushLog(
+            session,
+            `Initiative d20: ${initiative.firstRoll} vs ` +
+            `${initiative.secondRoll} — **${firstTurn.character}** ` +
+            "moves first"
+        );
+
         await interaction.reply(
-            [
-                "⚔️ **Battle started!**",
-                statLine(session, session.battle.characters[0]),
-                statLine(session, session.battle.characters[1]),
-                `Initiative d20: ${initiative.firstRoll} vs ` +
-                    `${initiative.secondRoll}`,
-                `${mentionOwner(session, nextPlayer.character)} — ` +
-                    `**${nextPlayer.character.name}** moves first. ` +
-                    "Use /battle-attack!"
-            ].join("\n")
+            `⚔️ <@${opponentId}> accepted — battle started!`
+        );
+
+        await sendBattlePanel(
+            interaction.channel, session,
+            `🚩 **${firstTurn.character}** ` +
+            `(<@${nextPlayer.discordId}>) to act — press Attack!`
         );
     }
 };
