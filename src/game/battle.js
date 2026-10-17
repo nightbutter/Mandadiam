@@ -23,6 +23,9 @@ function createBattle(first, second, options = {}) {
         character.cost ??= 0;
         // EX gauge is transient battle state, like cost.
         character.ex ??= 0;
+        // Per-skill cooldown counters (skillKey → remaining own
+        // turns), transient like cost/ex — fresh every battle.
+        character.cooldowns ??= {};
     }
 
     const initiative = determineTurnOrder(first, second, options);
@@ -290,6 +293,17 @@ function endTurn(battle) {
             message: "การต่อสู้สิ้นสุดแล้ว",
             winner: status.winner
         };
+    }
+
+    // Tick the departing fighter's skill cooldowns — each counter is
+    // "remaining own turns until ready". Ticking at end-of-own-turn
+    // means a skill just used this turn keeps its full count.
+    const actor = battle.currentTurn.character;
+
+    if (actor.cooldowns) {
+        for (const key of Object.keys(actor.cooldowns)) {
+            actor.cooldowns[key] = Math.max(0, actor.cooldowns[key] - 1);
+        }
     }
 
     battle.turnIndex =

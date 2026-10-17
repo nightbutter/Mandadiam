@@ -1,4 +1,8 @@
-const { buildBattleEmbed, buildBattleRow } = require("./battleFormat");
+const {
+    buildBattleEmbed,
+    buildBattleRow,
+    buildBattleResultEmbed
+} = require("./battleFormat");
 
 // Sends the persistent battle panel and remembers its message id on
 // the session so later actions edit it in place.
@@ -40,7 +44,18 @@ async function updateBattlePanel(channel, session, report = null) {
     }
 }
 
+// Posts the dedicated final-result card once a battle is over. The
+// service deletes the session at finalization, so the terminal
+// action's handler is the only place this can ever fire — duplicate
+// announcements can't happen.
+async function sendBattleResult(channel, session, reason) {
+    return channel.send({
+        embeds: [buildBattleResultEmbed(session, reason)]
+    });
+}
+
 module.exports = {
     sendBattlePanel,
-    updateBattlePanel
+    updateBattlePanel,
+    sendBattleResult
 };

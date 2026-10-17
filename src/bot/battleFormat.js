@@ -61,7 +61,11 @@ function buildBattleEmbed(session, report = null) {
     const [a, b] = battle.characters;
 
     const embed = new EmbedBuilder()
-        .setTitle(`⚔️ ${a.name} vs ${b.name}`)
+        .setTitle(
+            battle.status === "finished"
+                ? `🏆 Battle Finished — ${a.name} vs ${b.name}`
+                : `⚔️ ${a.name} vs ${b.name}`
+        )
         .setColor(
             battle.status === "finished" ? 0x95a5a6 : 0xe74c3c
         )
@@ -165,18 +169,22 @@ function buildSkillSelectMenu(session) {
 
         const affordable = actor.cost >= skill.cost;
         const condition = skill.canUse(actor, defender);
-        const usable = affordable && condition.ok;
+        const cooling = actor.cooldowns?.[key] ?? 0;
 
-        const status = !affordable
-            ? `✗ needs ${skill.cost} COST`
-            : condition.ok
-                ? "✓ ready"
-                : `✗ ${condition.reason}`;
+        const status = cooling > 0
+            ? `⏳ Cooldown: ${cooling} of your turns`
+            : !affordable
+                ? `✗ needs ${skill.cost} COST`
+                : condition.ok
+                    ? "✓ ready"
+                    : `✗ ${condition.reason}`;
 
         return {
             label: `${skill.name} — ${skill.cost} COST`,
             value: skill.key,
-            description: `${status} · ${skill.description}`.slice(0, 100)
+            description:
+                `${status} · cd ${skill.cooldown} · ` +
+                `${skill.description}`.slice(0, 100)
         };
     }).filter(Boolean);
 
@@ -335,9 +343,69 @@ function formatAttackReport(session, result) {
     return lines.join("\n");
 }
 
+// Dedicated final-result card — a standalone channel message sent
+// once when a battle ends, separate from the rolling panel log.
+// reason: "knockout" | "forfeit".
+function buildBattleResultEmbed(session, reason = "knockout") {
+    const { battle } = session;
+    const winnerPlayer = session.players.find(
+        p => p.character.name === battle.winner
+    );
+    const loserPlayer = session.players.find(
+        p => p !== winnerPlayer
+    );
+    const wc = winnerPlayer?.character;
+    const lc = loserPlayer?.character;
+
+    const outcome = reason === "forfeit"
+        ? `${lc?.name ?? "The loser"} forfeits — ` +
+          `**${wc?.name ?? battle.winner ?? "Nobody"}** wins!`
+        : `**${wc?.name ?? battle.winner ?? "Nobody"}** wins ` +
+          "by knockout!";
+
+    const embed = new EmbedBuilder()
+        .setTitle("🏆 Battle Finished")
+        .setColor(0xf1c40f)
+        .setDescription(
+            (wc ? `${mentionOwner(session, wc)} ` : "") +
+            `${wc?.name ?? ""}\n\n` +
+            outcome
+        );
+
+    if (wc) {
+        embed.addFields({
+            name: `🥇 ${wc.name}`,
+            value:
+                `HP ${wc.hp}/${wc.maxHp} · COST ${wc.cost}`,
+            inline: true
+        });
+    }
+
+    if (lc) {
+        embed.addFields({
+            name: `🥈 ${lc.name}`,
+            value:
+                `HP ${Math.max(0, lc.hp)}/${lc.maxHp} · ` +
+                `COST ${lc.cost}`,
+            inline: true
+        });
+    }
+
+    embed.addFields({
+        name: "Result",
+        value:
+            (reason === "forfeit" ? "Forfeit" : "Knockout") +
+            ` after ${battle.turnNumber} turn(s)`,
+        inline: true
+    });
+
+    return embed;
+}
+
 module.exports = {
     mentionOwner,
     statLine,
+    buildBattleResultEmbed,
     formatStatus,
     formatAttackReport,
     pushLog,

@@ -27,7 +27,9 @@ function toBattleCharacter(character, skills = [], exKey = null) {
         skills,
         // Transient ultimate state — in-memory only, never persisted.
         ex: 0,
-        exKey
+        exKey,
+        // Per-skill cooldowns — in-memory, scoped to this battle.
+        cooldowns: {}
     };
 }
 
@@ -304,6 +306,19 @@ function useSkill(session, discordId, skillKey, options = {}) {
         return { ok: false, error: "invalid_target" };
     }
 
+    // Cooldown gate — counter = remaining own turns until ready.
+    // Rejected here (before COST/changes), so a cooling skill can
+    // never be re-fired early and the counter is untouched.
+    const cooling = attacker.cooldowns?.[skillKey] ?? 0;
+
+    if (cooling > 0) {
+        return {
+            ok: false,
+            error: "on_cooldown",
+            remaining: cooling
+        };
+    }
+
     const condition = skill.canUse(attacker, defender);
 
     if (!condition.ok) {
@@ -340,6 +355,12 @@ function useSkill(session, discordId, skillKey, options = {}) {
     }
 
     endTurn(battle);
+
+    // Arm the cooldown only after the action resolved AND this turn
+    // ended — the end-of-turn tick above must not consume the turn
+    // the skill was just used on. A finished battle returns early,
+    // never arming anything.
+    (attacker.cooldowns ??= {})[skillKey] = skill.cooldown ?? 0;
 
     const next = startTurn(battle);
 

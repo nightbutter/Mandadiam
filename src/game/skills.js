@@ -7,11 +7,16 @@
 //   target <= 50%  →  target.hp * 2 <= target.maxHp
 //   user   <= 40%  →  actor.hp * 5  <= actor.maxHp * 2
 
+// Cooldown counts the fighter's OWN subsequent turns: a skill used
+// on turn N is blocked on the owner's next `cooldown` turns and
+// becomes ready when the counter reaches zero at that fighter's
+// turn start (decremented in startTurn, engine-side).
 const SKILLS = {
     power_strike: {
         key: "power_strike",
         name: "Power Strike",
         cost: 3,
+        cooldown: 2,
         type: "attack",
         description: "A heavy blow — no condition.",
         canUse() {
@@ -22,6 +27,7 @@ const SKILLS = {
         key: "piercing_strike",
         name: "Piercing Strike",
         cost: 2,
+        cooldown: 3,
         type: "attack",
         description: "Target must be at 50% HP or lower.",
         canUse(actor, target) {
@@ -37,6 +43,7 @@ const SKILLS = {
         key: "desperation_burst",
         name: "Desperation Burst",
         cost: 2,
+        cooldown: 3,
         type: "attack",
         description: "Usable only at 40% HP or lower.",
         canUse(actor) {

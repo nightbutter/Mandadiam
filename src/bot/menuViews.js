@@ -405,10 +405,13 @@ function helpView() {
                 name: "Skills",
                 value:
                     "Press ✨ **Skills** on your turn in the battle " +
-                    "panel. Skills use d8 + ATK + SPE − DEF.\n" +
-                    "• **Power Strike** — 3 COST, no condition\n" +
-                    "• **Piercing Strike** — 2 COST, target at ≤50% HP\n" +
-                    "• **Desperation Burst** — 2 COST, you at ≤40% HP"
+                    "panel. Skills use d8 + ATK + SPE − DEF and go on " +
+                    "cooldown for a few of YOUR turns after use.\n" +
+                    "• **Power Strike** — 3 COST, no condition, 2-turn cd\n" +
+                    "• **Piercing Strike** — 2 COST, target ≤50% HP, " +
+                    "3-turn cd\n" +
+                    "• **Desperation Burst** — 2 COST, you ≤40% HP, " +
+                    "3-turn cd"
             },
             {
                 name: "Slash commands (fallback)",

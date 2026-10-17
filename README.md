@@ -153,17 +153,27 @@ exist so future catalogs can offer different loadouts. New characters
 are provisioned on creation; pre-skill characters are backfilled by the
 migration and lazily on first battle use.
 
-| Skill | COST | Condition |
-|---|---|---|
-| **Power Strike** | 3 | none |
-| **Piercing Strike** | 2 | target HP ≤ 50% of max |
-| **Desperation Burst** | 2 | your HP ≤ 40% of max |
+| Skill | COST | Condition | Cooldown |
+|---|---|---|---|
+| **Power Strike** | 3 | none | 2 of your turns |
+| **Piercing Strike** | 2 | target HP ≤ 50% of max | 3 of your turns |
+| **Desperation Burst** | 2 | your HP ≤ 40% of max | 3 of your turns |
 
 All skills resolve through the same combat engine as normal attacks
 (`max(0, d8 + ATK + SPE − DEF)`, d20 contests, double attack,
 reflection, crits — nothing duplicated). COST is spent exactly once per
 accepted action by `performAction`; a failed condition or insufficient
 COST rejects the action without touching HP, COST, dice, or the turn.
+
+**Cooldowns**: each skill tracks its own per-battle counter on the
+fighter (`character.cooldowns`, in-memory like COST/EX). A successful
+use arms the counter to the catalog value *after* the turn ends, so
+the use-turn never consumes it; the counter ticks down at the end of
+each of the fighter's own turns (opponent turns never touch it) and
+the skill is usable again the turn the counter reaches 0. Rejected
+activations arm nothing. The picker shows `⏳ Cooldown: N of your
+turns`, `✓ ready`, or the blocking condition; stale selections are
+re-validated server-side and rejected safely.
 
 **Using a skill**: on your turn in the battle panel, press
 **✨ Skills** → an ephemeral picker lists your skills with their COST
@@ -172,8 +182,17 @@ panel updates in place with the result; spectators and out-of-turn
 clicks are rejected ephemerally. There is no skill slash command —
 the panel is the interface.
 
+**Battle end**: a knockout or confirmed forfeit finalizes the session
+exactly once — the panel edits in place to `🏆 Battle Finished` with
+all action buttons removed, and a dedicated result card (winner,
+loser, reason, final HP/COST, turn count) posts to the channel.
+Further clicks on the dead panel or stale ephemeral pickers get a
+safe "no longer active" rejection — a finished battle can never be
+re-finalized or act again. Multi-hit EX stops applying hits the
+moment the defender drops.
+
 Not implemented yet: skill assignment/editing UI, character-unique
-loadouts, status effects, cooldowns.
+loadouts, status effects.
 
 ### EX Skills (Ultimates)
 

@@ -13,7 +13,11 @@ const {
     buildExPrompt,
     formatAttackReport
 } = require("./battleFormat");
-const { sendBattlePanel, updateBattlePanel } = require("./battlePanel");
+const {
+    sendBattlePanel,
+    updateBattlePanel,
+    sendBattleResult
+} = require("./battlePanel");
 
 // Dispatches MessageComponent button interactions. Every handler
 // re-validates state server-side — customIds are never trusted.
@@ -194,6 +198,12 @@ async function handleBattleAttack(interaction) {
         embeds: [buildBattleEmbed(session, report)],
         components: outcome.finished ? [] : [buildBattleRow(session)]
     });
+
+    if (outcome.finished) {
+        await sendBattleResult(
+            interaction.channel, session, "knockout"
+        );
+    }
 }
 
 async function handleBattleRefresh(interaction) {
@@ -267,6 +277,8 @@ async function handleSkillSelect(interaction) {
             unknown_skill: "Unknown skill.",
             skill_not_owned: "That skill isn't equipped.",
             condition_failed: outcome.reason,
+            on_cooldown:
+                `On cooldown — ${outcome.remaining} of your turns left.`,
             insufficient_cost: "Not enough COST.",
             invalid_target: "No valid target.",
             action_failed: outcome.result?.message ?? "That action failed."
@@ -308,6 +320,12 @@ async function handleSkillSelect(interaction) {
     });
 
     await updateBattlePanel(interaction.channel, session, report);
+
+    if (outcome.finished) {
+        await sendBattleResult(
+            interaction.channel, session, "knockout"
+        );
+    }
 }
 
 // Opens an ephemeral Ultimate detail/confirm prompt for the current
@@ -425,6 +443,12 @@ async function handleUltimateConfirm(interaction) {
         content: `💥 **${outcome.result.exName}** unleashed!`,
         components: []
     });
+
+    if (outcome.finished) {
+        await sendBattleResult(
+            interaction.channel, session, "knockout"
+        );
+    }
 }
 
 async function handleUltimateCancel(interaction) {
@@ -504,6 +528,8 @@ async function handleForfeitConfirm(interaction) {
     // The public panel is a different message — edit it via the
     // channel, since this click targets the ephemeral confirm prompt.
     await updateBattlePanel(interaction.channel, session);
+
+    await sendBattleResult(interaction.channel, session, "forfeit");
 
     await interaction.update({
         content:
