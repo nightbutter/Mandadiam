@@ -9,6 +9,7 @@ const {
     resolveExAttack, effectiveDef, effectiveMultiplier
 } = require("../../src/game/exCombat");
 const bs = require("../../src/game/services/battleService");
+const driver = require("../helpers/rollDriver");
 const { handleButton } = require("../../src/bot/buttons");
 const { buildExPrompt, exBar } = require("../../src/bot/battleFormat");
 const { pool } = require("../../src/database/db");
@@ -36,7 +37,7 @@ function player(id, name, stats = {}) {
 }
 
 function freshSession(p1Stats, p2Stats) {
-    return bs.startBattle(
+    return driver.start(
         `ex_${Math.random()}`,
         player("u1", "Hero", p1Stats),
         player("u2", "Enemy", p2Stats),
@@ -117,7 +118,7 @@ async function run() {
         const enemy = session.battle.characters[1];
         assert.equal(hero.ex, 0);
 
-        bs.attack(session, "u1", {
+        driver.attack(session, "u1", {
             attackerRolls: [15], defenderRolls: [10],
             damageRolls: [5]
         });
@@ -133,7 +134,7 @@ async function run() {
             { cost: 0 }, { hp: 500, maxHp: 500 }
         );
         const hero = session.battle.characters[0];
-        bs.attack(session, "u1", {
+        driver.attack(session, "u1", {
             attackerRolls: [20], defenderRolls: [10],
             damageRolls: [3, 4]
         });
@@ -147,7 +148,7 @@ async function run() {
         // reflected → attacker +0 action EX, +10 if reflect dmg >0
         const session = freshSession({}, {});
         const hero = session.battle.characters[0];
-        bs.attack(session, "u1", {
+        driver.attack(session, "u1", {
             attackerRolls: [15], defenderRolls: [20],
             reflectRolls: [5]
         });
@@ -285,7 +286,7 @@ async function run() {
         );
         const hero = session.battle.characters[0];
 
-        const out = bs.useEx(session, "u1", {
+        const out = driver.useEx(session, "u1", {
             attackerRolls: [15], defenderRolls: [10],
             damageRolls: [5]
         });
@@ -339,7 +340,7 @@ async function run() {
     {
         // finished battle rejects EX
         const session = freshSession({ cost: 5 }, { hp: 1 });
-        bs.attack(session, "u1", {
+        driver.attack(session, "u1", {
             attackerRolls: [15], defenderRolls: [10], damageRolls: [8]
         });
         assert.equal(session.battle.status, "finished");
@@ -398,6 +399,15 @@ async function run() {
         Math.random = () => rolls.length ? rolls.shift() : 0.5;
         try {
             await handleButton(confirm);
+            // Manual dice — one authorized click per required die.
+            while (session.pending) {
+                const exp = bs.expectedRoll(session);
+                await handleButton(mockButton({
+                    customId: `battle:roll:${session.pending.id}`,
+                    userId: exp.discordId,
+                    channelId: session.channelId
+                }));
+            }
         } finally {
             Math.random = realRandom;
         }

@@ -1,4 +1,6 @@
 const { createBattle, startTurn, performAction, performExAction, endTurn } = require("../battle");
+const { determineTurnOrder } = require("../combat");
+const manualRolls = require("../manualRolls");
 const { getSkill } = require("../skills");
 const { getExSkill } = require("../exSkills");
 const { EX_MAX } = require("../exGauge");
@@ -171,6 +173,11 @@ function cancelChallenge(channelId, userId) {
 
 // playerOne/playerTwo: { discordId, character } where character is the
 // combat-shaped object from toBattleCharacter.
+//
+// Initiative is a MANUAL roll now — the engine never rolls dice on a
+// player's behalf. The battle starts with a pending "initiative"
+// action; both players click their d20, then resolvePending installs
+// the real turn order and starts the first turn.
 function startBattle(channelId, playerOne, playerTwo, options = {}) {
     if (battlesByChannel.has(channelId)) {
         return { ok: false, error: "channel_busy" };
@@ -179,7 +186,7 @@ function startBattle(channelId, playerOne, playerTwo, options = {}) {
     const battle = createBattle(
         playerOne.character,
         playerTwo.character,
-        options
+        { ...options, deferInitiative: true }
     );
 
     const session = {
@@ -188,14 +195,21 @@ function startBattle(channelId, playerOne, playerTwo, options = {}) {
         players: [playerOne, playerTwo],
         // Discord layer attaches panelMessageId and appends short lines
         // to log for the battle panel; the engine ignores both.
-        log: []
+        log: [],
+        pending: null
     };
 
     battlesByChannel.set(channelId, session);
 
-    const firstTurn = startTurn(battle);
+    session.pending = manualRolls.createPending({
+        type: "initiative",
+        attacker: playerOne.character,
+        defender: playerTwo.character,
+        attackerId: playerOne.discordId,
+        defenderId: playerTwo.discordId
+    });
 
-    return { ok: true, session, firstTurn };
+    return { ok: true, session };
 }
 
 function getSession(channelId) {
@@ -222,13 +236,11 @@ function opponentOf(session, discordId) {
     return session.players.find(p => p.discordId !== discordId) ?? null;
 }
 
-// Normal attack only. performAction is synchronous, so the turn check
-// and the action can never interleave — a duplicate call sees
-// actionTaken already set or a different current turn.
-function attack(session, discordId, options = {}) {
-    const { battle } = session;
-
-    if (battle.status !== "active") {
+// Shared action gate — identical order/meaning for every action
+// type. A pending roll sequence locks the battle: nothing else can
+// start until it resolves or the battle ends.
+function gateAction(session, discordId) {
+    if (session.battle.status !== "active") {
         return { ok: false, error: "finished" };
     }
 
@@ -236,58 +248,70 @@ function attack(session, discordId, options = {}) {
         return { ok: false, error: "not_participant" };
     }
 
-    if (currentTurnPlayer(session)?.discordId !== discordId) {
-        return { ok: false, error: "not_your_turn" };
-    }
-
-    const result = performAction(battle, { type: "normal" }, options);
-
-    if (!result.success) {
-        return { ok: false, error: "action_failed", result };
-    }
-
-    if (battle.status === "finished") {
-        battlesByChannel.delete(session.channelId);
-        return { ok: true, result, finished: true, winner: battle.winner };
-    }
-
-    endTurn(battle);
-
-    const next = startTurn(battle);
-
-    if (!next.success) {
-        battlesByChannel.delete(session.channelId);
+    if (session.pending) {
         return {
-            ok: true,
-            result,
-            finished: true,
-            winner: battle.winner ?? null
+            ok: false,
+            error: "action_in_progress",
+            expected: manualRolls.expectedRoll(session.pending)
         };
     }
 
-    return { ok: true, result, finished: false, next };
-}
-
-// Skill attack — same lifecycle as attack() with extra server-side
-// gates: catalog lookup, per-character ownership, COST sufficiency,
-// and the skill's own condition. Any failure returns before
-// performAction, so HP/COST/turn/log are untouched and COST is never
-// charged for a rejected action.
-function useSkill(session, discordId, skillKey, options = {}) {
-    const { battle } = session;
-
-    if (battle.status !== "active") {
-        return { ok: false, error: "finished" };
-    }
-
-    if (!session.players.some(p => p.discordId === discordId)) {
-        return { ok: false, error: "not_participant" };
-    }
-
     if (currentTurnPlayer(session)?.discordId !== discordId) {
         return { ok: false, error: "not_your_turn" };
     }
 
+    return null;
+}
+
+function createActionPending(session, actor, action) {
+    const opponent = opponentOf(session, actor.discordId);
+
+    session.pending = manualRolls.createPending({
+        ...action,
+        attacker: session.battle.currentTurn.character,
+        defender: session.battle.characters.find(
+            c => c !== session.battle.currentTurn.character
+        ),
+        attackerId: actor.discordId,
+        defenderId: opponent?.discordId ?? null
+    });
+
+    return {
+        ok: true,
+        pending: true,
+        expected: manualRolls.describeRoll(session.pending)
+    };
+}
+
+// Normal attack — validates, then waits for the manual d20/d8
+// sequence. Nothing mutates until the rolls resolve through
+// performAction, exactly as before.
+function attack(session, discordId, options = {}) {
+    const gate = gateAction(session, discordId);
+
+    if (gate) {
+        return gate;
+    }
+
+    return createActionPending(
+        session,
+        { discordId },
+        { type: "normal" }
+    );
+}
+
+// Skill attack — same gates as before plus catalog/ownership/target/
+// cooldown/condition checks, all before the pending action exists.
+// COST is still spent inside performAction at resolution; the
+// cooldown arms only after a successful resolve + endTurn.
+function useSkill(session, discordId, skillKey, options = {}) {
+    const gate = gateAction(session, discordId);
+
+    if (gate) {
+        return gate;
+    }
+
+    const { battle } = session;
     const skill = getSkill(skillKey);
 
     if (!skill) {
@@ -329,72 +353,31 @@ function useSkill(session, discordId, skillKey, options = {}) {
         };
     }
 
-    // performAction charges the COST exactly once inside the engine —
-    // the service never spends COST itself.
-    const result = performAction(
-        battle,
-        { type: "skill", cost: skill.cost },
-        options
+    // COST is validated BEFORE dice collection starts — the engine
+    // still performs the authoritative spend at resolution (COST
+    // cannot change while a roll is pending, so this pre-check is
+    // exact, not a reservation).
+    if (attacker.cost < skill.cost) {
+        return { ok: false, error: "insufficient_cost" };
+    }
+
+    return createActionPending(
+        session,
+        { discordId },
+        { type: "skill", skill }
     );
-
-    if (!result.success) {
-        const error =
-            result.message === "COST ไม่เพียงพอ"
-                ? "insufficient_cost"
-                : "action_failed";
-
-        return { ok: false, error, result };
-    }
-
-    result.skillKey = skillKey;
-    result.skillName = skill.name;
-
-    if (battle.status === "finished") {
-        battlesByChannel.delete(session.channelId);
-        return { ok: true, result, finished: true, winner: battle.winner };
-    }
-
-    endTurn(battle);
-
-    // Arm the cooldown only after the action resolved AND this turn
-    // ended — the end-of-turn tick above must not consume the turn
-    // the skill was just used on. A finished battle returns early,
-    // never arming anything.
-    (attacker.cooldowns ??= {})[skillKey] = skill.cooldown ?? 0;
-
-    const next = startTurn(battle);
-
-    if (!next.success) {
-        battlesByChannel.delete(session.channelId);
-        return {
-            ok: true,
-            result,
-            finished: true,
-            winner: battle.winner ?? null
-        };
-    }
-
-    return { ok: true, result, finished: false, next };
 }
 
-// EX/Ultimate activation — same lifecycle as attack()/useSkill().
-// Every gate runs before performExAction so a rejection never touches
-// HP, COST, the gauge, the log, or the turn.
+// EX/Ultimate activation — all the same gates as before; gauge and
+// COST are only consumed inside performExAction at resolution.
 function useEx(session, discordId, options = {}) {
+    const gate = gateAction(session, discordId);
+
+    if (gate) {
+        return gate;
+    }
+
     const { battle } = session;
-
-    if (battle.status !== "active") {
-        return { ok: false, error: "finished" };
-    }
-
-    if (!session.players.some(p => p.discordId === discordId)) {
-        return { ok: false, error: "not_participant" };
-    }
-
-    if (currentTurnPlayer(session)?.discordId !== discordId) {
-        return { ok: false, error: "not_your_turn" };
-    }
-
     const attacker = battle.currentTurn?.character;
 
     if (!attacker || attacker.hp <= 0) {
@@ -421,9 +404,101 @@ function useEx(session, discordId, options = {}) {
         return { ok: false, error: "invalid_target" };
     }
 
-    // performExAction spends the EX COST and consumes the gauge
-    // exactly once, inside the engine — never here.
-    const result = performExAction(battle, exDef, options);
+    // Same pre-dice COST validation as skills — the authoritative
+    // spend still happens inside performExAction at resolution.
+    if (attacker.cost < exDef.cost) {
+        return { ok: false, error: "insufficient_cost" };
+    }
+
+    return createActionPending(
+        session,
+        { discordId },
+        { type: "ex", exDef }
+    );
+}
+
+// What the current pending action expects — drives the roll button.
+function expectedRoll(session) {
+    return session.pending
+        ? manualRolls.describeRoll(session.pending)
+        : null;
+}
+
+// A player clicked a roll button. Server-side die, one per click,
+// resolved exactly once through the same engine paths as before.
+// `roll` is a test-only hook — the Discord path never passes it, so
+// a client can never pick its own result.
+function recordRoll(session, discordId, roll = null) {
+    const pending = session.pending;
+
+    if (!pending) {
+        return { ok: false, error: "no_pending" };
+    }
+
+    const recorded = manualRolls.recordRoll(pending, discordId, roll);
+
+    if (!recorded.ok) {
+        return { ok: false, error: recorded.error, expected: recorded.expected };
+    }
+
+    if (!recorded.complete) {
+        return {
+            ok: true,
+            rolled: recorded,
+            pending: true,
+            expected: recorded.expected
+        };
+    }
+
+    return { ok: true, rolled: recorded, ...resolvePending(session) };
+}
+
+// The collected dice replay through the engine's existing injected-
+// roll options — identical results to the old automatic path.
+function resolvePending(session) {
+    const pending = session.pending;
+    const { battle } = session;
+
+    session.pending = null;
+
+    if (pending.type === "initiative") {
+        const [playerOne, playerTwo] = session.players;
+        const initiative = determineTurnOrder(
+            playerOne.character,
+            playerTwo.character,
+            {
+                firstRolls: pending.attackerRolls,
+                secondRolls: pending.defenderRolls
+            }
+        );
+
+        battle.initiative = initiative;
+        battle.orderedCharacters = initiative.order.map(name =>
+            battle.characters.find(c => c.name === name)
+        );
+        battle.turnIndex = 0;
+
+        const firstTurn = startTurn(battle);
+
+        return {
+            resolved: true,
+            type: "initiative",
+            initiative,
+            firstTurn
+        };
+    }
+
+    const result = pending.type === "ex"
+        ? performExAction(
+            battle, pending.exDef, manualRolls.rollOptions(pending)
+        )
+        : performAction(
+            battle,
+            pending.type === "skill"
+                ? { type: "skill", cost: pending.skill.cost }
+                : { type: "normal" },
+            manualRolls.rollOptions(pending)
+        );
 
     if (!result.success) {
         const error =
@@ -431,32 +506,52 @@ function useEx(session, discordId, options = {}) {
                 ? "insufficient_cost"
                 : "action_failed";
 
-        return { ok: false, error, result };
+        return { resolved: true, failed: true, error, result };
     }
 
-    result.exKey = exDef.key;
-    result.exName = exDef.name;
+    if (pending.type === "skill") {
+        result.skillKey = pending.skill.key;
+        result.skillName = pending.skill.name;
+    }
+
+    if (pending.type === "ex") {
+        result.exKey = pending.exDef.key;
+        result.exName = pending.exDef.name;
+    }
 
     if (battle.status === "finished") {
         battlesByChannel.delete(session.channelId);
-        return { ok: true, result, finished: true, winner: battle.winner };
+        return {
+            resolved: true,
+            result,
+            finished: true,
+            winner: battle.winner
+        };
     }
 
     endTurn(battle);
+
+    // Cooldown arms only after the action resolved AND this turn
+    // ended — the end-of-turn tick above must not consume the turn
+    // the skill was used on.
+    if (pending.type === "skill") {
+        (pending.attacker.cooldowns ??= {})[pending.skill.key] =
+            pending.skill.cooldown ?? 0;
+    }
 
     const next = startTurn(battle);
 
     if (!next.success) {
         battlesByChannel.delete(session.channelId);
         return {
-            ok: true,
+            resolved: true,
             result,
             finished: true,
             winner: battle.winner ?? null
         };
     }
 
-    return { ok: true, result, finished: false, next };
+    return { resolved: true, result, finished: false, next };
 }
 
 function forfeit(session, discordId) {
@@ -467,6 +562,12 @@ function forfeit(session, discordId) {
     }
 
     const winner = opponentOf(session, discordId);
+
+    // A terminal path cancels any outstanding roll sequence — stale
+    // roll buttons then hit the dead-session rejection.
+    if (session.pending) {
+        session.pending.status = "cancelled";
+    }
 
     session.battle.status = "finished";
     session.battle.winner = winner.character.name;
@@ -493,5 +594,7 @@ module.exports = {
     attack,
     useSkill,
     useEx,
+    expectedRoll,
+    recordRoll,
     forfeit
 };

@@ -55,6 +55,33 @@ function effectiveMultiplier(attacker, exDef) {
     };
 }
 
+// Per-hit EX damage — the exact math the resolveExAttack hits loop
+// uses, extracted so the manual-roll system can preview a collected
+// d8 without mutating state. EX crits double the raw roll+ATK+SPE
+// before the multiplier (unlike normal double-attack suppression).
+function exHit(attacker, roll, num, den, effDef) {
+    const critical = roll === 8;
+
+    let raw = roll + (attacker.atk ?? 0) + (attacker.spe ?? 0);
+    if (critical) {
+        raw *= 2;
+    }
+
+    return {
+        roll,
+        critical,
+        damage: Math.max(0, Math.floor(raw * num / den) - effDef)
+    };
+}
+
+// Read-only preview of one EX hit with a known die — identical math
+// to exHit applied inside resolveExAttack.
+function previewExHit(attacker, defender, exDef, roll) {
+    const { num, den } = effectiveMultiplier(attacker, exDef);
+    const effDef = effectiveDef(defender, exDef.effect);
+    return exHit(attacker, roll, num, den, effDef);
+}
+
 function resolveExAttack(attacker, defender, exDef, options = {}) {
     if (attacker.hp <= 0) {
         return {
@@ -115,21 +142,12 @@ function resolveExAttack(attacker, defender, exDef, options = {}) {
 
     for (let i = 0; i < hitCount; i++) {
         const roll = getRoll(8, options.damageRolls, i);
-        const critical = roll === 8;
-
-        let raw = roll + (attacker.atk ?? 0) + (attacker.spe ?? 0);
-        if (critical) {
-            raw *= 2;
-        }
-
-        const damage = Math.max(
-            0,
-            Math.floor(raw * num / den) - effDef
-        );
+        const hit = exHit(attacker, roll, num, den, effDef);
+        const damage = hit.damage;
 
         defender.hp = Math.max(0, defender.hp - damage);
         totalDamage += damage;
-        hits.push({ roll, critical, damage });
+        hits.push({ roll, critical: hit.critical, damage: hit.damage });
 
         // Hit COST once per action (guarded by turnState); damage-
         // received COST and EX per actual damage instance.
@@ -162,6 +180,7 @@ function resolveExAttack(attacker, defender, exDef, options = {}) {
 
 module.exports = {
     resolveExAttack,
+    previewExHit,
     effectiveDef,
     effectiveMultiplier
 };

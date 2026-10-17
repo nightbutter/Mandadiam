@@ -5,6 +5,7 @@ const characterService = require("../../src/services/characterService");
 const skillRepository =
     require("../../src/database/repositories/skillRepository");
 const bs = require("../../src/game/services/battleService");
+const driver = require("../helpers/rollDriver");
 const { INITIAL_LOADOUT } = require("../../src/game/skills");
 
 // Skill persistence + end-to-end battle use on real Neon.
@@ -71,7 +72,7 @@ function test(title, result) {
 
         // End-to-end: skill resolves through the shared engine.
         const b = await characterService.getActiveBattleCharacter(P2);
-        const session = bs.startBattle(
+        const session = driver.start(
             `${TAG}_chan`,
             { discordId: P1, character: a.character },
             { discordId: P2, character: b.character },
@@ -81,7 +82,7 @@ function test(title, result) {
         const hero = session.battle.characters[0];
         hero.cost = 5;
 
-        const out = bs.useSkill(
+        const out = driver.useSkill(
             session, P1, "power_strike",
             { attackerRolls: [15], defenderRolls: [10],
               damageRolls: [5] }

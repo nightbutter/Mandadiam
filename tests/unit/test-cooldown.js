@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const bs = require("../../src/game/services/battleService");
+const driver = require("../helpers/rollDriver");
 const { handleButton } = require("../../src/bot/buttons");
 const {
     buildSkillSelectMenu,
@@ -37,13 +38,30 @@ function mkPlayer(id, name, stats = {}) {
 // durable punching bag so turns can cycle without a knockout.
 function freshBattle() {
     const chan = `cd_${++channelSeq}`;
-    const { session } = bs.startBattle(
+    const { session } = driver.start(
         chan,
         mkPlayer("u1", "Hero", { skills: ALL_SKILLS, cost: 6 }),
         mkPlayer("u2", "Foe", { hp: 400, atk: 10 }),
         { firstRolls: [18], secondRolls: [5] }
     );
     return session;
+}
+
+// Click the panel roll button for whoever is expected next until
+// the pending action resolves — returns the roll mocks used.
+async function clickRolls(session, channelId, makeButton) {
+    const mocks = [];
+    while (session.pending) {
+        const exp = bs.expectedRoll(session);
+        const m = makeButton({
+            customId: `battle:roll:${session.pending.id}`,
+            userId: exp.discordId,
+            channelId
+        });
+        mocks.push(m);
+        await handleButton(m);
+    }
+    return mocks;
 }
 
 const HIT = {
@@ -92,7 +110,7 @@ async function run() {
         const session = freshBattle();
         const hero = session.battle.characters[0];
 
-        const used = bs.useSkill(session, "u1", "power_strike", HIT);
+        const used = driver.useSkill(session, "u1", "power_strike", HIT);
         assert(used.ok);
         assert.equal(hero.cooldowns.power_strike, 2);
         console.log(
@@ -100,7 +118,7 @@ async function run() {
         );
 
         // Foe's turn — hero's counters must not tick.
-        bs.attack(session, "u2", HIT);
+        driver.attack(session, "u2", HIT);
         assert.equal(hero.cooldowns.power_strike, 2);
         console.log("PASS: opponent turn does not tick my cooldown");
 
@@ -130,7 +148,7 @@ async function run() {
         // A different skill is independently usable (desperation
         // needs hero at ≤40% — 30/100 qualifies).
         hero.hp = 30;
-        const other = bs.useSkill(
+        const other = driver.useSkill(
             session, "u1", "desperation_burst", HIT
         );
         assert(other.ok);
@@ -142,18 +160,18 @@ async function run() {
         );
 
         // Turn N+2 for hero — still blocked (1 left).
-        bs.attack(session, "u2", HIT);
+        driver.attack(session, "u2", HIT);
         const still = bs.useSkill(session, "u1", "power_strike", HIT);
         assert.equal(still.error, "on_cooldown");
         assert.equal(still.remaining, 1);
 
         // Spend the turn on a normal attack — tick brings it to 0.
-        bs.attack(session, "u1", HIT);
+        driver.attack(session, "u1", HIT);
         assert.equal(hero.cooldowns.power_strike, 0);
 
-        bs.attack(session, "u2", HIT);
+        driver.attack(session, "u2", HIT);
         hero.cost = 6;
-        const ready = bs.useSkill(session, "u1", "power_strike", HIT);
+        const ready = driver.useSkill(session, "u1", "power_strike", HIT);
         assert(ready.ok);
         console.log(
             "PASS: skill ready exactly when its counter reaches 0"
@@ -175,7 +193,7 @@ async function run() {
         console.log("PASS: rejected skill never starts a cooldown");
 
         // A reflected skill WAS executed — cooldown still arms.
-        const reflected = bs.useSkill(session, "u1", "power_strike", {
+        const reflected = driver.useSkill(session, "u1", "power_strike", {
             attackerRolls: [15], defenderRolls: [20],
             reflectRolls: [3]
         });
@@ -191,7 +209,7 @@ async function run() {
         // Double attack executes once → one cooldown arm, not two.
         const session = freshBattle();
         const hero = session.battle.characters[0];
-        const out = bs.useSkill(session, "u1", "power_strike", {
+        const out = driver.useSkill(session, "u1", "power_strike", {
             attackerRolls: [20], defenderRolls: [5],
             damageRolls: [3, 4]
         });
@@ -208,7 +226,7 @@ async function run() {
         // Fresh battle → fresh counters (no cross-battle leak).
         const s1 = freshBattle();
         const h1 = s1.battle.characters[0];
-        bs.useSkill(s1, "u1", "power_strike", HIT);
+        driver.useSkill(s1, "u1", "power_strike", HIT);
         assert.equal(h1.cooldowns.power_strike, 2);
 
         const s2 = freshBattle();
@@ -246,7 +264,7 @@ async function run() {
 
     {
         // Knockout via a real attack → dedicated result card sent.
-        const session = bs.startBattle(
+        const session = driver.start(
             "end_1",
             mkPlayer("u1", "Hero", { skills: ALL_SKILLS, cost: 6 }),
             mkPlayer("u2", "Foe", { hp: 10 }),
@@ -262,17 +280,20 @@ async function run() {
         const rolls = [0.85, 0.3, 0.5];
         const realRandom = Math.random;
         Math.random = () => rolls.length ? rolls.shift() : 0.5;
+        let rollMocks;
         try {
             await handleButton(btn);
+            rollMocks = await clickRolls(session, "end_1", mockButton);
         } finally {
             Math.random = realRandom;
         }
 
+        const lastRoll = rollMocks[rollMocks.length - 1];
         assert.equal(session.battle.status, "finished");
         assert.equal(session.battle.winner, "Hero");
-        assert.equal(btn.calls.updates[0].components.length, 0);
-        assert.equal(btn.calls.sent.length, 1);
-        const card = btn.calls.sent[0].embeds[0].data;
+        assert.equal(lastRoll.calls.updates[0].components.length, 0);
+        assert.equal(lastRoll.calls.sent.length, 1);
+        const card = lastRoll.calls.sent[0].embeds[0].data;
         assert.equal(card.title, "🏆 Battle Finished");
         assert(card.description.includes("knockout"));
         console.log("PASS: knockout sends one dedicated result card");
@@ -294,7 +315,7 @@ async function run() {
 
     {
         // Forfeit produces its own result card with the forfeit reason.
-        const session = bs.startBattle(
+        const session = driver.start(
             "end_2",
             mkPlayer("u1", "Hero", { skills: ALL_SKILLS }),
             mkPlayer("u2", "Foe"),
@@ -328,7 +349,7 @@ async function run() {
     {
         // A skill that kills finalizes the same way — and stale
         // skill selects hit the safe path afterwards.
-        const session = bs.startBattle(
+        const session = driver.start(
             "end_3",
             mkPlayer("u1", "Hero", { skills: ALL_SKILLS, cost: 6 }),
             mkPlayer("u2", "Foe", { hp: 5 }),
@@ -355,18 +376,21 @@ async function run() {
         const rolls = [0.85, 0.3, 0.5];
         const realRandom = Math.random;
         Math.random = () => rolls.length ? rolls.shift() : 0.5;
+        let rollMocks;
         try {
             const { handleBattleSelect } =
                 require("../../src/bot/buttons");
             await handleBattleSelect(sel);
+            rollMocks = await clickRolls(session, "end_3", mockButton);
         } finally {
             Math.random = realRandom;
         }
 
+        const lastRoll = rollMocks[rollMocks.length - 1];
         assert.equal(session.battle.status, "finished");
-        assert.equal(sel.calls.sent.length, 1);
+        assert.equal(lastRoll.calls.sent.length, 1);
         assert.equal(
-            sel.calls.sent[0].embeds[0].data.title,
+            lastRoll.calls.sent[0].embeds[0].data.title,
             "🏆 Battle Finished"
         );
         console.log("PASS: lethal skill ends battle with result card");

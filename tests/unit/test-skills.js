@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { SKILLS, INITIAL_LOADOUT, getSkill } =
     require("../../src/game/skills");
 const bs = require("../../src/game/services/battleService");
+const driver = require("../helpers/rollDriver");
 const { handleButton, handleBattleSelect } =
     require("../../src/bot/buttons");
 const { buildSkillSelectMenu } = require("../../src/bot/battleFormat");
@@ -28,7 +29,7 @@ function player(id, name, stats = {}) {
 }
 
 function freshSession(p1Stats, p2Stats) {
-    return bs.startBattle(
+    return driver.start(
         `sk_${Math.random()}`,
         player("u1", "Hero", p1Stats),
         player("u2", "Enemy", p2Stats),
@@ -112,7 +113,7 @@ async function run() {
         const session = freshSession({ cost: 4 }, { hp: 50 });
         const before = session.battle.characters[1].hp;
 
-        const out = bs.useSkill(
+        const out = driver.useSkill(
             session, "u1", "piercing_strike",
             { attackerRolls: [15], defenderRolls: [10],
               damageRolls: [5] }
@@ -202,7 +203,7 @@ async function run() {
         const session = freshSession(
             { hp: 40, cost: 6 }, { hp: 100 }
         );
-        const out = bs.useSkill(
+        const out = driver.useSkill(
             session, "u1", "desperation_burst",
             { attackerRolls: [15], defenderRolls: [10],
               damageRolls: [5] }
@@ -217,7 +218,7 @@ async function run() {
     {
         // finished battle rejects
         const session = freshSession({ cost: 5 }, { hp: 1 });
-        bs.attack(session, "u1", {
+        driver.attack(session, "u1", {
             attackerRolls: [15], defenderRolls: [10],
             damageRolls: [8]
         });
@@ -274,12 +275,21 @@ async function run() {
         );
         console.log("PASS: skill menu lists skills with COST");
 
-        // select a skill → resolves + picker consumed
+        // select a skill → pending rolls, then resolves once
         const sel = mockSelect(
             "u1", session.channelId, ["power_strike"]
         );
         const turnBefore = session.battle.turnNumber;
         await handleBattleSelect(sel);
+        assert(session.pending);
+        while (session.pending) {
+            const exp = bs.expectedRoll(session);
+            await handleButton(mockButton({
+                customId: `battle:roll:${session.pending.id}`,
+                userId: exp.discordId,
+                channelId: session.channelId
+            }));
+        }
         assert.equal(session.battle.turnNumber, turnBefore + 1);
         assert.equal(sel.calls.updates[0].components.length, 0);
         console.log("PASS: skill selection resolves exactly one action");

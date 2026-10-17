@@ -89,8 +89,7 @@ async function handleChallengeAccept(interaction) {
         return;
     }
 
-    const { session, firstTurn } = started;
-    const initiative = session.battle.initiative;
+    const { session } = started;
 
     await interaction.editReply({
         content:
@@ -99,20 +98,11 @@ async function handleChallengeAccept(interaction) {
         components: []
     });
 
-    const nextPlayer = session.players.find(
-        p => p.character.name === firstTurn.character
-    );
-
-    pushLog(
-        session,
-        `Initiative d20: ${initiative.firstRoll} vs ` +
-        `${initiative.secondRoll} — **${firstTurn.character}** moves first`
-    );
-
+    // Initiative is manual now — both players roll their own d20 on
+    // the panel before the first turn begins.
     await sendBattlePanel(
         interaction.channel, session,
-        `🚩 **${firstTurn.character}** ` +
-        `(<@${nextPlayer.discordId}>) to act — press Attack!`
+        "🎲 Roll for initiative — both players roll d20!"
     );
 }
 
@@ -151,6 +141,15 @@ function battleCharacterByName(session, name) {
     return session.players.find(p => p.character.name === name) ?? null;
 }
 
+const GATE_MESSAGES = {
+    finished: "That battle is already finished.",
+    not_participant: "Only battle participants can act.",
+    not_your_turn: "It's not your turn yet.",
+    action_in_progress: "A dice roll is already in progress."
+};
+
+// Action selected → validation passed → the panel now waits for the
+// manual roll sequence (first die: the attacker's contest d20).
 async function handleBattleAttack(interaction) {
     const session = battleService.getSession(interaction.channelId);
 
@@ -162,27 +161,55 @@ async function handleBattleAttack(interaction) {
     const outcome = battleService.attack(session, interaction.user.id);
 
     if (!outcome.ok) {
-        const messages = {
-            finished: "That battle is already finished.",
-            not_participant: "Only battle participants can attack.",
-            not_your_turn: "It's not your turn yet.",
-            action_failed:
-                outcome.result?.message ?? "That action failed."
-        };
-
-        await safeReply(interaction, messages[outcome.error]);
+        await safeReply(
+            interaction,
+            GATE_MESSAGES[outcome.error] ?? "That action failed."
+        );
         return;
     }
 
-    const report = formatAttackReport(session, outcome.result);
+    await interaction.update({
+        embeds: [buildBattleEmbed(session, "⚔️ Attack declared!")],
+        components: [buildBattleRow(session)]
+    });
+}
+
+// Shared tail once a pending action resolves — same reporting and
+// finalization as the old immediate path.
+async function announceResolved(interaction, session, outcome) {
+    if (outcome.type === "initiative") {
+        const { initiative, firstTurn } = outcome;
+        const first = session.players.find(
+            p => p.character.name === firstTurn.character
+        );
+
+        pushLog(
+            session,
+            `Initiative d20: ${initiative.firstRoll} vs ` +
+            `${initiative.secondRoll} — **${firstTurn.character}** ` +
+            "moves first"
+        );
+
+        return (
+            `🚩 **${firstTurn.character}** ` +
+            `(<@${first.discordId}>) to act — press Attack!`
+        );
+    }
+
+    const { result } = outcome;
+    const icon = result.exName ? "💥" : result.skillName ? "✨" : "⚔️";
+    const verb = result.exName
+        ? `unleashed **${result.exName}**`
+        : result.skillName
+            ? `used **${result.skillName}**`
+            : "attacked";
 
     pushLog(
         session,
-        `⚔️ **${outcome.result.attacker}** → ` +
-        `**${outcome.result.defender}**: ` +
-        `${outcome.result.damage} dmg` +
-        (outcome.result.outcome === "reflected" ? " (reflected)" : "") +
-        (outcome.result.outcome === "double_attack" ? " (double)" : "")
+        `${icon} **${result.attacker}** ${verb} → ` +
+        `**${result.defender}**: ${result.damage} dmg` +
+        (result.outcome === "reflected" ? " (reflected)" : "") +
+        (result.outcome === "double_attack" ? " (double)" : "")
     );
 
     if (outcome.finished) {
@@ -193,6 +220,90 @@ async function handleBattleAttack(interaction) {
             `${winner ? `(<@${winner.discordId}>)` : ""} wins!`
         );
     }
+
+    return formatAttackReport(session, result);
+}
+
+// A player clicked a roll button — server-side die, exactly one per
+// authorized click, action resolves once all dice are collected.
+async function handleRoll(interaction) {
+    const session = battleService.getSession(interaction.channelId);
+
+    if (!session) {
+        await safeReply(interaction, STALE_MESSAGE);
+        return;
+    }
+
+    const actionId = interaction.customId.slice("battle:roll:".length);
+
+    if (!session.pending || session.pending.id !== actionId) {
+        await safeReply(
+            interaction,
+            "That roll is no longer needed."
+        );
+        return;
+    }
+
+    const outcome = battleService.recordRoll(
+        session, interaction.user.id
+    );
+
+    if (!outcome.ok) {
+        const messages = {
+            no_pending: "That roll is no longer needed.",
+            no_roll_expected: "That roll is no longer needed.",
+            wrong_roller:
+                outcome.expected
+                    ? `Waiting for <@${outcome.expected.discordId}>'s ` +
+                      "roll — not yours."
+                    : "It's not your roll.",
+            invalid_die: "Invalid die."
+        };
+
+        await safeReply(
+            interaction,
+            messages[outcome.error] ?? "That roll failed."
+        );
+        return;
+    }
+
+    const rolled = outcome.rolled;
+
+    pushLog(
+        session,
+        `🎲 <@${interaction.user.id}> rolled ` +
+        `d${rolled.die}: **${rolled.value}**`
+    );
+
+    if (outcome.pending) {
+        await interaction.update({
+            embeds: [
+                buildBattleEmbed(
+                    session,
+                    `🎲 <@${interaction.user.id}> rolled ` +
+                    `**${rolled.value}** — ` +
+                    `next: ${outcome.expected.text}`
+                )
+            ],
+            components: [buildBattleRow(session)]
+        });
+        return;
+    }
+
+    // Sequence complete — resolve once.
+    if (outcome.failed) {
+        const message = outcome.error === "insufficient_cost"
+            ? "Not enough COST."
+            : outcome.result?.message ?? "That action failed.";
+
+        await interaction.update({
+            embeds: [buildBattleEmbed(session, `❌ ${message}`)],
+            components: [buildBattleRow(session)]
+        });
+        return;
+    }
+
+    const report = await announceResolved(interaction, session, outcome);
 
     await interaction.update({
         embeds: [buildBattleEmbed(session, report)],
@@ -251,8 +362,8 @@ async function handleBattleSkills(interaction) {
     });
 }
 
-// The picked skill resolves through battleService.useSkill — the same
-// validation gates as buttons, then the shared combat engine.
+// The picked skill is validated exactly as before — then becomes a
+// pending manual-roll action instead of resolving immediately.
 async function handleSkillSelect(interaction) {
     const session = battleService.getSession(interaction.channelId);
 
@@ -271,9 +382,8 @@ async function handleSkillSelect(interaction) {
 
     if (!outcome.ok) {
         const messages = {
-            finished: "That battle is already finished.",
+            ...GATE_MESSAGES,
             not_participant: "Only battle participants can use skills.",
-            not_your_turn: "It's not your turn yet.",
             unknown_skill: "Unknown skill.",
             skill_not_owned: "That skill isn't equipped.",
             condition_failed: outcome.reason,
@@ -291,41 +401,18 @@ async function handleSkillSelect(interaction) {
         return;
     }
 
-    const report = formatAttackReport(session, outcome.result);
-
-    pushLog(
-        session,
-        `✨ **${outcome.result.attacker}** used ` +
-        `**${outcome.result.skillName}** → ` +
-        `**${outcome.result.defender}**: ` +
-        `${outcome.result.damage} dmg` +
-        (outcome.result.outcome === "reflected" ? " (reflected)" : "") +
-        (outcome.result.outcome === "double_attack" ? " (double)" : "")
-    );
-
-    if (outcome.finished) {
-        const winner = battleCharacterByName(session, outcome.winner);
-        pushLog(
-            session,
-            `🏆 **${outcome.winner ?? "Nobody"}** ` +
-            `${winner ? `(<@${winner.discordId}>)` : ""} wins!`
-        );
-    }
-
-    // Acknowledge the select on the ephemeral picker, then edit the
-    // public panel through the channel like the forfeit flow does.
+    // Acknowledge the ephemeral picker; the roll happens on the panel.
     await interaction.update({
-        content: `✨ **${outcome.result.skillName}** used!`,
+        content:
+            `✨ **${outcome.expected ? "Skill armed" : "Skill"}** — ` +
+            "roll your dice on the battle panel!",
         components: []
     });
 
-    await updateBattlePanel(interaction.channel, session, report);
-
-    if (outcome.finished) {
-        await sendBattleResult(
-            interaction.channel, session, "knockout"
-        );
-    }
+    await updateBattlePanel(
+        interaction.channel, session,
+        `✨ Skill declared — ${outcome.expected.text}`
+    );
 }
 
 // Opens an ephemeral Ultimate detail/confirm prompt for the current
@@ -393,10 +480,9 @@ async function handleUltimateConfirm(interaction) {
 
     if (!outcome.ok) {
         const messages = {
-            finished: "That battle is already finished.",
+            ...GATE_MESSAGES,
             not_participant:
                 "Only battle participants can use an Ultimate.",
-            not_your_turn: "It's not your turn yet.",
             invalid_actor: "Your character can't act.",
             no_ex_assigned: "This character has no Ultimate assigned.",
             unknown_ex: "Unknown Ultimate.",
@@ -414,41 +500,17 @@ async function handleUltimateConfirm(interaction) {
         return;
     }
 
-    const report = formatAttackReport(session, outcome.result);
-
-    pushLog(
-        session,
-        `💥 **${outcome.result.attacker}** unleashed ` +
-        `**${outcome.result.exName}** → ` +
-        `**${outcome.result.defender}**: ` +
-        `${outcome.result.damage} dmg` +
-        (outcome.result.outcome === "reflected" ? " (reflected)" : "") +
-        (outcome.result.outcome === "double_attack" ? " (double)" : "")
-    );
-
-    if (outcome.finished) {
-        const winner = battleCharacterByName(session, outcome.winner);
-        pushLog(
-            session,
-            `🏆 **${outcome.winner ?? "Nobody"}** ` +
-            `${winner ? `(<@${winner.discordId}>)` : ""} wins!`
-        );
-    }
-
     // The public panel is a different message — edit it via the
     // channel, same as the forfeit flow.
-    await updateBattlePanel(interaction.channel, session, report);
+    await updateBattlePanel(
+        interaction.channel, session,
+        `💥 Ultimate declared — ${outcome.expected.text}`
+    );
 
     await interaction.update({
-        content: `💥 **${outcome.result.exName}** unleashed!`,
+        content: "💥 Ultimate unleashed — roll your dice on the panel!",
         components: []
     });
-
-    if (outcome.finished) {
-        await sendBattleResult(
-            interaction.channel, session, "knockout"
-        );
-    }
 }
 
 async function handleUltimateCancel(interaction) {
@@ -564,6 +626,12 @@ async function handleButton(interaction) {
     if (interaction.customId.startsWith("menu:")) {
         const { handleMenuButton } = require("./menu");
         await handleMenuButton(interaction);
+        return;
+    }
+
+    // Roll buttons carry a per-action id — prefix match.
+    if (interaction.customId.startsWith("battle:roll:")) {
+        await handleRoll(interaction);
         return;
     }
 

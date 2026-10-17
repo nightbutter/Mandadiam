@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const bs = require("../../src/game/services/battleService");
 const { handleButton } = require("../../src/bot/buttons");
+const driver = require("../helpers/rollDriver");
 const { pool } = require("../../src/database/db");
 
 console.log("=== Battle Button Tests ===");
@@ -131,10 +132,27 @@ async function run() {
     // --- battle buttons ---
 
     function freshSession() {
-        return bs.startBattle(
+        return driver.start(
             "c1", player("u1", "Noctis"), player("u2", "Slime"),
             { firstRolls: [18], secondRolls: [12] }
         ).session;
+    }
+
+    // Click the panel's roll button for whoever is expected next,
+    // until the pending action resolves.
+    async function clickRolls(session, channelId = "c1") {
+        const mocks = [];
+        while (session.pending) {
+            const exp = bs.expectedRoll(session);
+            const m = mockButton({
+                customId: `battle:roll:${session.pending.id}`,
+                userId: exp.discordId,
+                channelId
+            });
+            mocks.push(m);
+            await handleButton(m);
+        }
+        return mocks;
     }
 
     {
@@ -163,7 +181,7 @@ async function run() {
         // Defender HP too high for any single attack (incl. double /
         // crit) to end the battle — the turn advance stays
         // deterministic.
-        const session = bs.startBattle(
+        const session = driver.start(
             "c1", player("u1", "Noctis"),
             player("u2", "Slime", { hp: 500 }),
             { firstRolls: [18], secondRolls: [12] }
@@ -172,9 +190,15 @@ async function run() {
         const btn = mockButton({ customId: "battle:attack", userId: "u1" });
         await handleButton(btn);
 
+        // Attack click only ARMS the pending roll — no turn advance,
+        // no HP change yet.
         assert(btn.calls.updates.length === 1);
+        assert(session.pending);
+        assert.equal(session.battle.turnNumber, before);
+
+        const rollMocks = await clickRolls(session);
         assert.equal(session.battle.turnNumber, before + 1);
-        console.log("PASS: one click applies exactly one action");
+        console.log("PASS: attack + manual rolls advance exactly one turn");
 
         // Same button again — now it's u2's turn, not u1's.
         await handleButton(btn);
@@ -186,7 +210,7 @@ async function run() {
     }
 
     {
-        const session = bs.startBattle(
+        const session = driver.start(
             "c1", player("u1", "Noctis"), player("u2", "Slime", { hp: 1 }),
             { firstRolls: [18], secondRolls: [12] }
         ).session;
@@ -199,12 +223,15 @@ async function run() {
         const rolls = [0.85, 0.3, 0.5];
         const realRandom = Math.random;
         Math.random = () => rolls.length ? rolls.shift() : 0.5;
+        let rollMocks;
         try {
             await handleButton(btn);
+            rollMocks = await clickRolls(session);
         } finally {
             Math.random = realRandom;
         }
-        assert(btn.calls.updates[0].components.length === 0);
+        const last = rollMocks[rollMocks.length - 1];
+        assert(last.calls.updates[0].components.length === 0);
         assert.equal(session.battle.status, "finished");
         console.log("PASS: finished battle disables action buttons");
     }

@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const bs = require("../../src/game/services/battleService");
+const driver = require("../helpers/rollDriver");
 
 console.log("=== Battle Service Tests ===");
 
@@ -43,7 +44,7 @@ function player(id, name, stats = {}) {
 // Fresh character objects per session — createBattle does not clone,
 // and hp/cost are mutated in place during play.
 function startSession(channelId = "c1") {
-    return bs.startBattle(
+    return driver.start(
         channelId,
         player("u1", "Noctis"),
         player("u2", "Slime"),
@@ -130,7 +131,7 @@ test("non-participant and out-of-turn attacks rejected", () => {
 
 test("normal attack applies damage and COST", () => {
     const { session } = startSession();
-    const r = bs.attack(session, "u1", {
+    const r = driver.attack(session, "u1", {
         attackerRolls: [15], defenderRolls: [10], damageRolls: [5]
     });
     assert(r.ok && !r.finished);
@@ -144,7 +145,7 @@ test("normal attack applies damage and COST", () => {
 
 test("double attack on attacker d20 = 20", () => {
     const { session } = startSession();
-    const r = bs.attack(session, "u1", {
+    const r = driver.attack(session, "u1", {
         attackerRolls: [20], defenderRolls: [10], damageRolls: [5, 4]
     });
     assert.equal(r.result.outcome, "double_attack");
@@ -153,7 +154,7 @@ test("double attack on attacker d20 = 20", () => {
 
 test("reflect on defender d20 = 20", () => {
     const { session } = startSession();
-    const r = bs.attack(session, "u1", {
+    const r = driver.attack(session, "u1", {
         attackerRolls: [12], defenderRolls: [20], reflectRolls: [6]
     });
     assert.equal(r.result.outcome, "reflected");
@@ -162,11 +163,11 @@ test("reflect on defender d20 = 20", () => {
 });
 
 test("attack finishing the battle reports winner", () => {
-    const { session } = bs.startBattle(
+    const { session } = driver.start(
         "c1", player("u1", "Noctis"), player("u2", "Slime", { hp: 1 }),
         { firstRolls: [18], secondRolls: [12] }
     );
-    const r = bs.attack(session, "u1", {
+    const r = driver.attack(session, "u1", {
         attackerRolls: [15], defenderRolls: [10], damageRolls: [8]
     });
     assert(r.finished);

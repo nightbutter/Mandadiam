@@ -5,6 +5,7 @@ const characterService = require("../../src/services/characterService");
 const exRepository =
     require("../../src/database/repositories/exRepository");
 const bs = require("../../src/game/services/battleService");
+const driver = require("../helpers/rollDriver");
 const { EX_KEYS, getExSkill } = require("../../src/game/exSkills");
 const { migrate } = require("../../src/database/migrations/migrate");
 
@@ -80,7 +81,7 @@ function test(title, result) {
 
         // End-to-end: build gauge via real attacks, then unleash.
         const b = await characterService.getActiveBattleCharacter(P2);
-        const session = bs.startBattle(
+        const session = driver.start(
             `${TAG}_chan`,
             { discordId: P1, character: a.character },
             { discordId: P2, character: b.character },
@@ -99,7 +100,7 @@ function test(title, result) {
         const enemy = session.battle.characters[1];
         const hpBefore = enemy.hp;
 
-        const out = bs.useEx(session, P1, {
+        const out = driver.useEx(session, P1, {
             attackerRolls: [15], defenderRolls: [10],
             damageRolls: [5]
         });

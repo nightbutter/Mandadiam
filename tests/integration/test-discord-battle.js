@@ -3,6 +3,7 @@ const { pool } = require("../../src/database/db");
 const playerService = require("../../src/services/playerService");
 const characterService = require("../../src/services/characterService");
 const bs = require("../../src/game/services/battleService");
+const driver = require("../helpers/rollDriver");
 
 // End-to-end PvP flow against real Neon data: register -> create ->
 // select -> challenge -> accept -> battle to finish -> verify the
@@ -71,10 +72,11 @@ async function snapshot(id) {
         // --- battle ---
         const a = await characterService.getActiveBattleCharacter(P1);
         const b = await characterService.getActiveBattleCharacter(P2);
-        const started = bs.startBattle(
+        const started = driver.start(
             CHANNEL,
             { discordId: P1, character: a.character },
-            { discordId: P2, character: b.character }
+            { discordId: P2, character: b.character },
+            { firstRolls: [18], secondRolls: [12] }
         );
         test("battle starts with first turn", started.firstTurn.success);
         test(
@@ -91,7 +93,7 @@ async function snapshot(id) {
         let final;
         while (guard++ < 10) {
             const current = bs.currentTurnPlayer(session);
-            final = bs.attack(session, current.discordId, {
+            final = driver.attack(session, current.discordId, {
                 attackerRolls: [20],
                 defenderRolls: [10],
                 damageRolls: [8, 8]

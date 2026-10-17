@@ -28,11 +28,19 @@ function createBattle(first, second, options = {}) {
         character.cooldowns ??= {};
     }
 
-    const initiative = determineTurnOrder(first, second, options);
+    // deferInitiative: the manual-roll system collects both players'
+    // d20s via button clicks and resolves order later — the engine
+    // must not roll automatically. orderedCharacters is provisional
+    // (insertion order) until resolveInitiative installs the real one.
+    const initiative = options.deferInitiative
+        ? null
+        : determineTurnOrder(first, second, options);
     const characters = [first, second];
-    const orderedCharacters = initiative.order.map(name =>
-        characters.find(character => character.name === name)
-    );
+    const orderedCharacters = initiative
+        ? initiative.order.map(name =>
+            characters.find(character => character.name === name)
+        )
+        : characters;
 
     return {
         characters,

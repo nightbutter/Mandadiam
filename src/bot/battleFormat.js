@@ -10,6 +10,7 @@ const {
 const { getSkill } = require("../game/skills");
 const { getExSkill } = require("../game/exSkills");
 const { EX_MAX } = require("../game/exGauge");
+const { describeRoll } = require("../game/manualRolls");
 
 const MAX_LOG_LINES = 6;
 
@@ -80,25 +81,41 @@ function buildBattleEmbed(session, report = null) {
 
     // One embed can only carry one thumbnail + one author icon:
     // the active fighter gets the thumbnail, the other goes top-left.
-    const active = battle.currentTurn?.character;
+    // Before initiative resolves there is no current turn — default
+    // to both fighters so portraits still show.
+    const active = battle.currentTurn?.character ?? a;
     const other = battle.characters.find(c => c !== active) ?? b;
 
-    if (active) {
-        embed.setThumbnail(portraitOf(active));
-        embed.setAuthor({
-            name: other.name,
-            iconURL: portraitOf(other)
-        });
-    }
+    embed.setThumbnail(portraitOf(active));
+    embed.setAuthor({
+        name: other.name,
+        iconURL: portraitOf(other)
+    });
 
     embed.addFields({
         name: "Turn",
-        value: battle.status === "finished"
-            ? `Finished — winner: **${battle.winner ?? "none"}**`
-            : `#${battle.turnNumber} — <@${turnPlayer.discordId}> ` +
-                "to act",
+        value:
+            battle.status === "finished"
+                ? `Finished — winner: **${battle.winner ?? "none"}**`
+                : turnPlayer
+                    ? `#${battle.turnNumber} — <@${turnPlayer.discordId}> ` +
+                        "to act"
+                    : "Rolling for initiative…",
         inline: true
     });
+
+    // Pending manual-roll state — who's expected and which die.
+    if (session.pending && battle.status !== "finished") {
+        const expected = describeRoll(session.pending);
+
+        if (expected) {
+            embed.addFields({
+                name: "🎲 Dice",
+                value: `Waiting for ${expected.text}`,
+                inline: true
+            });
+        }
+    }
 
     const description = [
         report,
@@ -116,8 +133,49 @@ function buildBattleEmbed(session, report = null) {
     return embed;
 }
 
+// Button label for the currently expected die, e.g.
+// "Roll d20 — Tie reroll" or "Roll d8 — Hit 2/3".
+function rollButtonLabel(expected) {
+    switch (expected.kind) {
+        case "tie_reroll":
+            return "Roll d20 — Tie reroll";
+        case "contest":
+            return "Roll d20";
+        case "reflect":
+            return "Roll d8 — Reflection";
+        case "damage":
+            return `Roll d8 — Hit ${expected.hitIndex + 1}/${expected.hitCount}`;
+        default:
+            return `Roll d${expected.die}`;
+    }
+}
+
 function buildBattleRow(session) {
     const finished = session.battle.status === "finished";
+
+    // While dice are being collected the panel shows ONE roll button
+    // keyed to the pending action id — stale clicks can't replay it.
+    if (session.pending && !finished) {
+        const expected = session.pending;
+
+        return new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`battle:roll:${expected.id}`)
+                .setLabel(rollButtonLabel(describeRoll(expected)))
+                .setEmoji("🎲")
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId("battle:refresh")
+                .setLabel("Refresh")
+                .setEmoji("🔄")
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId("battle:forfeit")
+                .setLabel("Forfeit")
+                .setEmoji("🏳️")
+                .setStyle(ButtonStyle.Danger)
+        );
+    }
 
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -411,6 +469,7 @@ module.exports = {
     pushLog,
     buildBattleEmbed,
     buildBattleRow,
+    rollButtonLabel,
     buildSkillSelectMenu,
     buildExPrompt,
     exBar

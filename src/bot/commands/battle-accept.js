@@ -13,7 +13,6 @@ module.exports = {
         const characterService = require("../../services/characterService");
         const battleService = require("../../game/services/battleService");
         const { sendBattlePanel } = require("../battlePanel");
-        const { pushLog } = require("../battleFormat");
 
         const accepted = battleService.acceptChallenge({
             channelId: interaction.channelId,
@@ -77,18 +76,7 @@ module.exports = {
             return;
         }
 
-        const { session, firstTurn } = started;
-        const { initiative } = session.battle;
-        const nextPlayer = session.players.find(
-            p => p.character.name === firstTurn.character
-        );
-
-        pushLog(
-            session,
-            `Initiative d20: ${initiative.firstRoll} vs ` +
-            `${initiative.secondRoll} — **${firstTurn.character}** ` +
-            "moves first"
-        );
+        const { session } = started;
 
         // The acceptance announce is public; the deferred reply is
         // the private receipt.
@@ -97,10 +85,10 @@ module.exports = {
         );
         await interaction.editReply("Battle started!");
 
+        // Initiative is a manual d20 from each player now.
         await sendBattlePanel(
             interaction.channel, session,
-            `🚩 **${firstTurn.character}** ` +
-            `(<@${nextPlayer.discordId}>) to act — press Attack!`
+            "🎲 Roll for initiative — both players roll d20!"
         );
     }
 };

@@ -284,6 +284,7 @@ module.exports = {
     calculateDamage,
     attack,
     getRoll,
+    calculateHitDamage,
     resolveContest,
     resolveAttack,
     determineTurnOrder
