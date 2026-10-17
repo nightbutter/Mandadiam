@@ -184,28 +184,6 @@ function resolveAttack(attacker, defender, options = {}) {
         };
     }
 
-
-    function determineTurnOrder(first, second, options = {}) {
-        const result = resolveContest({
-            attackerRolls: options.firstRolls,
-            defenderRolls: options.secondRolls
-        });
-
-        const firstGoesFirst = result.winner === "attacker";
-
-        return {
-            first: first.name,
-            second: second.name,
-            firstRoll: result.attackerRoll,
-            secondRoll: result.defenderRoll,
-            rerolls: result.rerolls,
-            order: firstGoesFirst
-                ? [first.name, second.name]
-                : [second.name, first.name]
-        };
-    }
-
-
     // ผู้โจมตีชนะ: ถ้า d20 = 20 จะโจมตีสองครั้ง
     const doubleAttack = contest.attackerRoll === 20;
     const hitCount = doubleAttack ? 2 : 1;

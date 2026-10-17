@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
-const { pool } = require("./db");
-const { migrate } = require("./migrate");
+const { pool } = require("../../src/database/db");
+const { migrate } = require("../../src/database/migrations/migrate");
 
 const TAG = `__schema_test_${Date.now()}__`;
 

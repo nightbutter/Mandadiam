@@ -5,7 +5,7 @@ const {
     startTurn,
     performAction,
     endTurn
-} = require("./battle");
+} = require("../../src/game/battle");
 
 function createCharacters() {
     return {

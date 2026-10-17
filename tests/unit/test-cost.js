@@ -6,7 +6,7 @@ const {
     onAttackHit,
     onAttackDamageTaken,
     spendCost
-} = require("./cost");
+} = require("../../src/game/cost");
 
 console.log("=== COST System Tests ===");
 

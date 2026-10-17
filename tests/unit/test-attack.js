@@ -1,6 +1,6 @@
 
 const assert = require("node:assert/strict");
-const { resolveAttack } = require("./combat");
+const { resolveAttack } = require("../../src/game/combat");
 
 function createCharacters() {
     return {

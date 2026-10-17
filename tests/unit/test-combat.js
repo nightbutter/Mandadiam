@@ -1,5 +1,5 @@
 
-const { attack } = require("./combat");
+const { attack } = require("../../src/game/combat");
 
 function createCharacters() {
     return {

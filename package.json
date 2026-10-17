@@ -1,10 +1,13 @@
 {
   "name": "discordrpg",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Discord RPG bot with turn-based combat",
+  "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/index.js",
+    "test": "node tests/run.js",
+    "migrate": "node src/database/migrations/migrate.js",
+    "commands:register": "node src/bot/deploy-commands.js"
   },
   "keywords": [],
   "author": "",

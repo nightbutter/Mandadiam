@@ -1,6 +1,6 @@
 
 const assert = require("node:assert/strict");
-const { determineTurnOrder, resolveAttack } = require("./combat");
+const { determineTurnOrder, resolveAttack } = require("../../src/game/combat");
 
 const player = {
     name: "Noctis",

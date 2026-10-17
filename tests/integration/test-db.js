@@ -2,7 +2,7 @@
     let db;
 
     try {
-        db = require("./db");
+        db = require("../../src/database/db");
     } catch (err) {
         console.error(`FAIL: ${err.message}`);
         process.exit(1);

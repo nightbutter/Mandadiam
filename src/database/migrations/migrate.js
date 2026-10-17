@@ -1,4 +1,4 @@
-const { pool } = require("./db");
+const { pool } = require("../db");
 
 // Idempotent schema — safe to run repeatedly.
 // Circular FK between players/characters is resolved by adding
