@@ -175,6 +175,24 @@ the panel is the interface.
 Not implemented yet: skill assignment/editing UI, character-unique
 loadouts, status effects, cooldowns.
 
+### EX Skills (Ultimates)
+
+Each character owns one persisted EX assignment in `character_ex`
+(one row per character, `ON DELETE CASCADE`). The gauge itself is
+**in-memory battle state** (0–100) and is lost on restart — see
+`docs/EX_SKILL_SYSTEM.md` for the full specification.
+
+- Gain: **+20** per successful attack action (once, even on double
+  attacks), **+10** per actual damage instance received.
+- Activation needs a full gauge (exactly 100), the declared COST
+  (default 4), your turn, a live target, and a valid assignment.
+- Formula: `max(0, floor((d8 + ATK + SPE) × mult) − effDef)` —
+  same d20 contest/reflect/double rules as normal attacks.
+- Initial catalog: **Oblivion Edge** (2.5× heavy), **Void Piercer**
+  (2×, pierces 50% DEF), **Fang Barrage** (3×1 hits), **Last Light**
+  (1.5×, 3× at ≤40% HP). Assignment is deterministic per character.
+- Use: battle panel → **💥 Ultimate** → ephemeral detail/confirm.
+
 ### Character creation rules
 
 New characters use a single **point-buy budget of 150** shared across
@@ -238,6 +256,10 @@ skills with a backfill for existing rows).
   Piercing Strike, Desperation Burst) persisted per character in
   `character_skills`, equipped via an ephemeral select menu on the
   battle panel.
+- Character-specific EX Ultimates: per-character `character_ex`
+  assignment, in-memory 0–100 gauge charged by attacking and taking
+  damage, and a 💥 Ultimate panel button with a confirm step that
+  resolves through the dedicated EX combat path.
 
 ### Battle state is in-memory
 

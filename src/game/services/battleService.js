@@ -1,5 +1,7 @@
-const { createBattle, startTurn, performAction, endTurn } = require("../battle");
+const { createBattle, startTurn, performAction, performExAction, endTurn } = require("../battle");
 const { getSkill } = require("../skills");
+const { getExSkill } = require("../exSkills");
+const { EX_MAX } = require("../exGauge");
 
 // In-memory PvP battle sessions and challenges, keyed by Discord channel.
 // HP and COST are transient battle state, so sessions live in memory
@@ -12,7 +14,7 @@ const CHALLENGE_TTL_MS = 60_000;
 // Maps a characters-table row to the shape the combat engine expects:
 // base stats only — hp starts full, cost starts empty. Transient
 // battle state is never persisted back to the row.
-function toBattleCharacter(character, skills = []) {
+function toBattleCharacter(character, skills = [], exKey = null) {
     return {
         name: character.name,
         hp: character.max_hp,
@@ -22,7 +24,10 @@ function toBattleCharacter(character, skills = []) {
         spe: character.spe,
         cost: 0,
         imageUrl: character.image_url ?? null,
-        skills
+        skills,
+        // Transient ultimate state — in-memory only, never persisted.
+        ex: 0,
+        exKey
     };
 }
 
@@ -351,6 +356,88 @@ function useSkill(session, discordId, skillKey, options = {}) {
     return { ok: true, result, finished: false, next };
 }
 
+// EX/Ultimate activation — same lifecycle as attack()/useSkill().
+// Every gate runs before performExAction so a rejection never touches
+// HP, COST, the gauge, the log, or the turn.
+function useEx(session, discordId, options = {}) {
+    const { battle } = session;
+
+    if (battle.status !== "active") {
+        return { ok: false, error: "finished" };
+    }
+
+    if (!session.players.some(p => p.discordId === discordId)) {
+        return { ok: false, error: "not_participant" };
+    }
+
+    if (currentTurnPlayer(session)?.discordId !== discordId) {
+        return { ok: false, error: "not_your_turn" };
+    }
+
+    const attacker = battle.currentTurn?.character;
+
+    if (!attacker || attacker.hp <= 0) {
+        return { ok: false, error: "invalid_actor" };
+    }
+
+    if (!attacker.exKey) {
+        return { ok: false, error: "no_ex_assigned" };
+    }
+
+    const exDef = getExSkill(attacker.exKey);
+
+    if (!exDef) {
+        return { ok: false, error: "unknown_ex" };
+    }
+
+    if (attacker.ex !== EX_MAX) {
+        return { ok: false, error: "ex_not_ready" };
+    }
+
+    const defender = battle.characters.find(c => c !== attacker);
+
+    if (!defender || defender.hp <= 0) {
+        return { ok: false, error: "invalid_target" };
+    }
+
+    // performExAction spends the EX COST and consumes the gauge
+    // exactly once, inside the engine — never here.
+    const result = performExAction(battle, exDef, options);
+
+    if (!result.success) {
+        const error =
+            result.message === "COST ไม่เพียงพอ"
+                ? "insufficient_cost"
+                : "action_failed";
+
+        return { ok: false, error, result };
+    }
+
+    result.exKey = exDef.key;
+    result.exName = exDef.name;
+
+    if (battle.status === "finished") {
+        battlesByChannel.delete(session.channelId);
+        return { ok: true, result, finished: true, winner: battle.winner };
+    }
+
+    endTurn(battle);
+
+    const next = startTurn(battle);
+
+    if (!next.success) {
+        battlesByChannel.delete(session.channelId);
+        return {
+            ok: true,
+            result,
+            finished: true,
+            winner: battle.winner ?? null
+        };
+    }
+
+    return { ok: true, result, finished: false, next };
+}
+
 function forfeit(session, discordId) {
     const loser = session.players.find(p => p.discordId === discordId);
 
@@ -384,5 +471,6 @@ module.exports = {
     opponentOf,
     attack,
     useSkill,
+    useEx,
     forfeit
 };

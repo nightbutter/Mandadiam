@@ -8,6 +8,8 @@ const {
     StringSelectMenuBuilder
 } = require("discord.js");
 const { getSkill } = require("../game/skills");
+const { getExSkill } = require("../game/exSkills");
+const { EX_MAX } = require("../game/exGauge");
 
 const MAX_LOG_LINES = 6;
 
@@ -127,6 +129,12 @@ function buildBattleRow(session) {
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(finished),
         new ButtonBuilder()
+            .setCustomId("battle:ultimate")
+            .setLabel("Ultimate")
+            .setEmoji("💥")
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(finished),
+        new ButtonBuilder()
             .setCustomId("battle:refresh")
             .setLabel("Refresh")
             .setEmoji("🔄")
@@ -183,6 +191,40 @@ function buildSkillSelectMenu(session) {
     );
 }
 
+// Ephemeral Ultimate detail/confirmation content. Returns the text
+// plus whether activation is currently legal — the service still
+// re-validates everything at confirm time.
+function buildExPrompt(character) {
+    const exDef = character.exKey ? getExSkill(character.exKey) : null;
+
+    if (!exDef) {
+        return {
+            content: "💥 This character has no Ultimate assigned.",
+            ready: false
+        };
+    }
+
+    const lines = [
+        `💥 **${exDef.name}**`,
+        exDef.description,
+        `COST: ${exDef.cost} · EX: ${character.ex ?? 0}/${EX_MAX}`
+    ];
+
+    let ready = true;
+
+    if (character.ex !== EX_MAX) {
+        lines.push("❌ EX gauge not full");
+        ready = false;
+    } else if (character.cost < exDef.cost) {
+        lines.push("❌ Not enough COST");
+        ready = false;
+    } else {
+        lines.push("✅ Ready to unleash!");
+    }
+
+    return { content: lines.join("\n"), ready };
+}
+
 function ownerOf(session, character) {
     return session.players.find(p => p.character === character) ?? null;
 }
@@ -192,11 +234,24 @@ function mentionOwner(session, character) {
     return owner ? `<@${owner.discordId}>` : character.name;
 }
 
+// 10-cell text gauge, e.g. [██████░░░░].
+function exBar(ex) {
+    const filled = Math.round(((ex ?? 0) / EX_MAX) * 10);
+    return "█".repeat(filled) + "░".repeat(10 - filled);
+}
+
 function statLine(session, character) {
+    const exDef = character.exKey ? getExSkill(character.exKey) : null;
+    const exText = exDef
+        ? `EX [${exBar(character.ex)}] ${character.ex ?? 0}/${EX_MAX} ` +
+          `· 💥${exDef.name} (${exDef.cost})`
+        : "EX —";
+
     return (
         `**${character.name}** ${mentionOwner(session, character)} — ` +
         `HP ${character.hp}/${character.maxHp} · COST ${character.cost} · ` +
-        `ATK ${character.atk} DEF ${character.def} SPE ${character.spe}`
+        `ATK ${character.atk} DEF ${character.def} SPE ${character.spe}\n` +
+        `${exText}`
     );
 }
 
@@ -242,9 +297,11 @@ function formatAttackReport(session, result) {
 
     const lines = [];
 
-    const verb = result.skillName
-        ? `uses **${result.skillName}**`
-        : "attacks";
+    const verb = result.exName
+        ? `unleashes **${result.exName}**`
+        : result.skillName
+            ? `uses **${result.skillName}**`
+            : "attacks";
 
     if (result.outcome === "reflected") {
         lines.push(
@@ -270,6 +327,7 @@ function formatAttackReport(session, result) {
 
     lines.push(
         `COST — ${result.attacker}: ${result.attackerCost}` +
+        (result.exCost ? ` (−${result.exCost} ultimate)` : "") +
         (result.skillCost ? ` (−${result.skillCost} skill)` : "") +
         ` · ${result.defender}: ${result.defenderCost}`
     );
@@ -285,5 +343,7 @@ module.exports = {
     pushLog,
     buildBattleEmbed,
     buildBattleRow,
-    buildSkillSelectMenu
+    buildSkillSelectMenu,
+    buildExPrompt,
+    exBar
 };

@@ -83,6 +83,29 @@ INSERT INTO character_skills (character_id, skill_key)
             ('desperation_burst')
     ) AS s (key)
     ON CONFLICT DO NOTHING;
+
+-- Phase 6: one EX (Ultimate) assignment per character. The PK is
+-- character_id so a character can never hold two EX rows. Keys are
+-- validated against the EX catalog in application code.
+CREATE TABLE IF NOT EXISTS character_ex (
+    character_id BIGINT PRIMARY KEY REFERENCES characters (id) ON DELETE CASCADE,
+    ex_key       TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Backfill a deterministic default EX for every existing character:
+-- EX_KEYS[id % 4] matches exRepository.provision(). ON CONFLICT keeps
+-- the migration idempotent and never overwrites an existing choice.
+INSERT INTO character_ex (character_id, ex_key)
+    SELECT c.id,
+           (ARRAY[
+               'oblivion_edge',
+               'void_piercer',
+               'fang_barrage',
+               'last_light'
+           ])[(c.id % 4 + 1)::int]
+    FROM characters c
+    ON CONFLICT (character_id) DO NOTHING;
 `;
 
 async function migrate() {

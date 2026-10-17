@@ -10,6 +10,7 @@ const {
     buildBattleEmbed,
     buildBattleRow,
     buildSkillSelectMenu,
+    buildExPrompt,
     formatAttackReport
 } = require("./battleFormat");
 const { sendBattlePanel, updateBattlePanel } = require("./battlePanel");
@@ -304,6 +305,130 @@ async function handleSkillSelect(interaction) {
     await updateBattlePanel(interaction.channel, session, report);
 }
 
+// Opens an ephemeral Ultimate detail/confirm prompt for the current
+// turn owner — shows name, effect, COST, gauge and a reason if it
+// can't fire. The confirm click re-validates everything via useEx.
+async function handleBattleUltimate(interaction) {
+    const session = battleService.getSession(interaction.channelId);
+
+    if (!session) {
+        await safeReply(interaction, STALE_MESSAGE);
+        return;
+    }
+
+    if (
+        battleService.currentTurnPlayer(session)?.discordId !==
+        interaction.user.id
+    ) {
+        await safeReply(
+            interaction,
+            session.players.some(
+                p => p.discordId === interaction.user.id
+            )
+                ? "It's not your turn yet."
+                : "Only battle participants can use an Ultimate."
+        );
+        return;
+    }
+
+    const character = session.battle.currentTurn?.character;
+    const { content, ready } = buildExPrompt(character);
+
+    await interaction.reply({
+        content,
+        ephemeral: true,
+        components: [
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId("battle:ultimate:confirm")
+                    .setLabel("Unleash!")
+                    .setStyle(ButtonStyle.Danger)
+                    .setDisabled(!ready),
+                new ButtonBuilder()
+                    .setCustomId("battle:ultimate:cancel")
+                    .setLabel("Cancel")
+                    .setStyle(ButtonStyle.Secondary)
+            )
+        ]
+    });
+}
+
+async function handleUltimateConfirm(interaction) {
+    const session = battleService.getSession(interaction.channelId);
+
+    if (!session) {
+        await interaction.update({
+            content: STALE_MESSAGE,
+            components: []
+        });
+        return;
+    }
+
+    const outcome = battleService.useEx(
+        session, interaction.user.id
+    );
+
+    if (!outcome.ok) {
+        const messages = {
+            finished: "That battle is already finished.",
+            not_participant:
+                "Only battle participants can use an Ultimate.",
+            not_your_turn: "It's not your turn yet.",
+            invalid_actor: "Your character can't act.",
+            no_ex_assigned: "This character has no Ultimate assigned.",
+            unknown_ex: "Unknown Ultimate.",
+            ex_not_ready: "EX gauge isn't full yet.",
+            insufficient_cost: "Not enough COST.",
+            invalid_target: "No valid target.",
+            action_failed: outcome.result?.message ?? "That action failed."
+        };
+
+        await interaction.update({
+            content:
+                `❌ ${messages[outcome.error] ?? "Ultimate failed."}`,
+            components: []
+        });
+        return;
+    }
+
+    const report = formatAttackReport(session, outcome.result);
+
+    pushLog(
+        session,
+        `💥 **${outcome.result.attacker}** unleashed ` +
+        `**${outcome.result.exName}** → ` +
+        `**${outcome.result.defender}**: ` +
+        `${outcome.result.damage} dmg` +
+        (outcome.result.outcome === "reflected" ? " (reflected)" : "") +
+        (outcome.result.outcome === "double_attack" ? " (double)" : "")
+    );
+
+    if (outcome.finished) {
+        const winner = battleCharacterByName(session, outcome.winner);
+        pushLog(
+            session,
+            `🏆 **${outcome.winner ?? "Nobody"}** ` +
+            `${winner ? `(<@${winner.discordId}>)` : ""} wins!`
+        );
+    }
+
+    // The public panel is a different message — edit it via the
+    // channel, same as the forfeit flow.
+    await updateBattlePanel(interaction.channel, session, report);
+
+    await interaction.update({
+        content: `💥 **${outcome.result.exName}** unleashed!`,
+        components: []
+    });
+}
+
+async function handleUltimateCancel(interaction) {
+    await interaction.update({
+        content: "Ultimate held — battle continues.",
+        components: []
+    });
+}
+
 // Step 1 — confirm prompt (ephemeral) so a stray click can't end
 // a battle. The actual forfeit runs only on battle:forfeit:confirm.
 async function handleBattleForfeit(interaction) {
@@ -395,6 +520,9 @@ const handlers = {
     "challenge:decline": handleChallengeDecline,
     "battle:attack": handleBattleAttack,
     "battle:skills": handleBattleSkills,
+    "battle:ultimate": handleBattleUltimate,
+    "battle:ultimate:confirm": handleUltimateConfirm,
+    "battle:ultimate:cancel": handleUltimateCancel,
     "battle:refresh": handleBattleRefresh,
     "battle:forfeit": handleBattleForfeit,
     "battle:forfeit:confirm": handleForfeitConfirm,

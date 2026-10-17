@@ -1,6 +1,8 @@
 
 const { determineTurnOrder, resolveAttack } = require("./combat");
+const { resolveExAttack } = require("./exCombat");
 const { onTurnStart, spendCost } = require("./cost");
+const { consumeEx, EX_MAX } = require("./exGauge");
 
 function createBattle(first, second, options = {}) {
     if (!first || !second || first === second) {
@@ -19,6 +21,8 @@ function createBattle(first, second, options = {}) {
         }
 
         character.cost ??= 0;
+        // EX gauge is transient battle state, like cost.
+        character.ex ??= 0;
     }
 
     const initiative = determineTurnOrder(first, second, options);
@@ -185,6 +189,81 @@ function performAction(battle, action, options = {}) {
 }
 
 
+// EX/Ultimate action — same lifecycle as performAction: gate, spend
+// COST once, consume the gauge, resolve through exCombat, refund both
+// resources if resolution fails, mark the action and update status.
+// The service layer validates EX-specific conditions (ownership,
+// gauge, target) before calling this.
+function performExAction(battle, exDef, options = {}) {
+    if (battle.status !== "active") {
+        return { success: false, message: "การต่อสู้สิ้นสุดแล้ว" };
+    }
+
+    const turn = battle.currentTurn;
+
+    if (!turn) {
+        return { success: false, message: "ต้องเริ่มเทิร์นก่อน" };
+    }
+
+    if (turn.actionTaken) {
+        return { success: false, message: "ตัวละครใช้การกระทำในเทิร์นนี้แล้ว" };
+    }
+
+    const attacker = turn.character;
+    const defender = getOpponent(battle, attacker);
+
+    if (attacker.hp <= 0 || defender.hp <= 0) {
+        return { success: false, message: "ตัวละครฝ่ายใดฝ่ายหนึ่งพ่ายแพ้แล้ว" };
+    }
+
+    if (attacker.ex !== EX_MAX) {
+        return { success: false, message: "เกจ EX ยังไม่เต็ม" };
+    }
+
+    if (!Number.isInteger(exDef?.cost) || exDef.cost < 0) {
+        return { success: false, message: "ค่า COST ของ EX ไม่ถูกต้อง" };
+    }
+
+    const costSpend = spendCost(attacker, exDef.cost);
+
+    if (!costSpend.success) {
+        return {
+            success: false,
+            message: costSpend.message,
+            cost: attacker.cost
+        };
+    }
+
+    // Consume the gauge before resolving; if resolution is rejected
+    // afterwards, both COST and the gauge are restored — a rejected
+    // activation never consumes resources.
+    consumeEx(attacker);
+
+    const result = resolveExAttack(attacker, defender, exDef, {
+        ...options,
+        turnState: turn
+    });
+
+    if (!result.success) {
+        attacker.cost = Math.min(6, attacker.cost + costSpend.spent);
+        attacker.ex = EX_MAX;
+        return result;
+    }
+
+    turn.actionTaken = true;
+
+    const battleStatus = updateBattleStatus(battle);
+
+    return {
+        ...result,
+        exCost: costSpend.spent,
+        attackerCost: attacker.cost,
+        defenderCost: defender.cost,
+        status: battle.status,
+        winner: battleStatus.winner
+    };
+}
+
 function endTurn(battle) {
     if (battle.status !== "active") {
         battle.currentTurn = null;
@@ -228,5 +307,6 @@ module.exports = {
     createBattle,
     startTurn,
     performAction,
+    performExAction,
     endTurn
 };

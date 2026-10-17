@@ -2,6 +2,10 @@ const {
     onAttackHit,
     onAttackDamageTaken
 } = require("./cost");
+const {
+    onAttackActionEx,
+    onDamageTakenEx
+} = require("./exGauge");
 /**
  * RPG Combat Engine
  * ระบบคำนวณดาเมจและตัดสินผลการต่อสู้
@@ -170,6 +174,8 @@ function resolveAttack(attacker, defender, options = {}) {
 
         attacker.hp = Math.max(0, attacker.hp - reflectDamage);
         onAttackDamageTaken(attacker, reflectDamage);
+        // EX: the reflect victim is the actual damage recipient.
+        onDamageTakenEx(attacker, reflectDamage);
 
         return {
             success: true,
@@ -215,11 +221,18 @@ function resolveAttack(attacker, defender, options = {}) {
         // ผู้ป้องกันได้ COST +1 เมื่อได้รับดาเมจจริงในแต่ละครั้ง
         onAttackDamageTaken(defender, hit.damage);
 
+        // EX: +10 gauge per actual damage instance received.
+        onDamageTakenEx(defender, hit.damage);
+
         // จบการโจมตีทันทีหากเป้าหมายพ่ายแพ้
         if (defender.hp <= 0) {
             break;
         }
     }
+
+    // EX: +20 for the attacker once per action — a double attack is
+    // still a single action, so this stays outside the hits loop.
+    onAttackActionEx(attacker);
 
     return {
         success: true,
@@ -270,6 +283,7 @@ module.exports = {
     rollDice,
     calculateDamage,
     attack,
+    getRoll,
     resolveContest,
     resolveAttack,
     determineTurnOrder

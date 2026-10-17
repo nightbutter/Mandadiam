@@ -1,6 +1,7 @@
 const playerRepository = require("../database/repositories/playerRepository");
 const characterRepository = require("../database/repositories/characterRepository");
 const skillRepository = require("../database/repositories/skillRepository");
+const exRepository = require("../database/repositories/exRepository");
 const { toBattleCharacter } = require("../game/services/battleService");
 
 // Character management for Discord commands. The invoking user's own
@@ -97,6 +98,9 @@ async function createCharacter(discordId, input) {
 
         // Equip the initial skill loadout — idempotent.
         await skillRepository.provision(character.id);
+
+        // Deterministic EX assignment — idempotent.
+        await exRepository.provision(character.id);
 
         return { ok: true, character };
     } catch (err) {
@@ -310,9 +314,16 @@ async function getActiveBattleCharacter(discordId) {
         skills = await skillRepository.listKeys(character.id);
     }
 
+    // Same lazy provisioning for the character's EX assignment.
+    let exKey = await exRepository.getExKey(character.id);
+
+    if (!exKey) {
+        exKey = await exRepository.provision(character.id);
+    }
+
     return {
         ok: true,
-        character: toBattleCharacter(character, skills)
+        character: toBattleCharacter(character, skills, exKey)
     };
 }
 
