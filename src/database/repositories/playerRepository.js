@@ -15,6 +15,18 @@ async function createPlayer(discordId, username) {
     return player;
 }
 
+async function registerPlayer(discordId, username) {
+    const { rows: [player] } = await pool.query(
+        `INSERT INTO players (discord_id, username)
+         VALUES ($1, $2)
+         ON CONFLICT (discord_id) DO NOTHING
+         RETURNING id, discord_id, username, active_character_id, created_at`,
+        [discordId, username]
+    );
+
+    return player ?? null;
+}
+
 async function findByDiscordId(discordId) {
     const { rows: [player] } = await pool.query(
         `SELECT id, discord_id, username, active_character_id, created_at
@@ -40,6 +52,7 @@ async function setActiveCharacter(playerId, characterId) {
 
 module.exports = {
     createPlayer,
+    registerPlayer,
     findByDiscordId,
     setActiveCharacter
 };

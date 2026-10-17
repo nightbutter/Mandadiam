@@ -88,7 +88,18 @@ commands update instantly; global commands can take up to an hour):
 npm run commands:register   # needs DISCORD_TOKEN + DISCORD_CLIENT_ID
 ```
 
-Currently implemented: `/ping`.
+Currently implemented:
+
+| Command | Description |
+| ------- | ----------- |
+| `/ping` | Health check |
+| `/register` | Register as a player (idempotent) |
+| `/profile` | Show your profile and active character |
+| `/characters` | List your characters |
+| `/character-create` | Create a character (name, HP, ATK, DEF, SPE) |
+| `/character-select` | Set your active character by name |
+
+All player commands reply ephemerally and require `DATABASE_URL`.
 
 ## Database
 
@@ -120,11 +131,14 @@ character ownership).
 - Battle controller: turn start/end, one action per turn, battle end and
   winner detection.
 - Neon PostgreSQL schema + repositories for players and characters.
+- Player registration and character management commands
+  (`/register`, `/profile`, `/characters`, `/character-create`,
+  `/character-select`) — services in `src/services/` keep SQL out of
+  command code; ownership is enforced by the composite FK.
 - Minimal Discord bot (`/ping`) with graceful shutdown.
 
 ## Not implemented yet
 
-- Player registration / character-selection commands.
 - Discord commands that drive battles (`battleService` is ready for them).
 - Battle persistence (HP/COST are intentionally transient).
 - Leveling, EXP, buffs/debuffs, passive skills, aggro.

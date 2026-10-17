@@ -33,8 +33,19 @@ async function findById(characterId) {
     return character ?? null;
 }
 
+async function findByName(playerId, name) {
+    const { rows: [character] } = await pool.query(
+        `SELECT id, player_id, name, max_hp, atk, def, spe, created_at
+         FROM characters WHERE player_id = $1 AND name = $2`,
+        [playerId, name]
+    );
+
+    return character ?? null;
+}
+
 module.exports = {
     createCharacter,
     listByPlayer,
-    findById
+    findById,
+    findByName
 };
