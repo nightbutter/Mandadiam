@@ -14,7 +14,8 @@ const expected = [
     "battle-accept",
     "battle-status",
     "battle-attack",
-    "battle-forfeit"
+    "battle-forfeit",
+    "rpg"
 ];
 
 for (const name of expected) {

@@ -138,6 +138,28 @@ async function selectCharacter(discordId, name) {
     return { ok: true, character };
 }
 
+// Select by id — used by select menus/buttons. The row must belong to
+// the caller's own player, same guarantee as selectCharacter.
+async function selectCharacterById(discordId, characterId) {
+    const player = await playerRepository.findByDiscordId(discordId);
+
+    if (!player) {
+        return { ok: false, error: "not_registered" };
+    }
+
+    const character = await characterRepository.findById(
+        Number(characterId)
+    );
+
+    if (!character || character.player_id !== player.id) {
+        return { ok: false, error: "not_found" };
+    }
+
+    await playerRepository.setActiveCharacter(player.id, character.id);
+
+    return { ok: true, character };
+}
+
 // Loads the player's active character converted to combat-engine shape
 // (hp = max_hp, cost = 0). Used when starting a battle from Discord.
 async function getActiveBattleCharacter(discordId) {
@@ -168,5 +190,6 @@ module.exports = {
     validateCharacterInput,
     createCharacter,
     listCharacters,
-    selectCharacter
+    selectCharacter,
+    selectCharacterById
 };

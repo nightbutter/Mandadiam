@@ -200,11 +200,46 @@ async function run() {
         );
         console.log("PASS: spectator forfeit rejected");
 
+        // Step 1: forfeit asks for confirmation — nothing happens yet.
         const mine = mockButton({ customId: "battle:forfeit", userId: "u1" });
         await handleButton(mine);
-        assert(mine.calls.updates[0].components.length === 0);
+        assert(mine.calls.replies[0].components.length === 1);
+        assert.equal(session.battle.status, "active");
+        console.log("PASS: forfeit asks for confirmation first");
+
+        // Step 2: confirm applies the forfeit and clears the prompt.
+        const confirm = mockButton({
+            customId: "battle:forfeit:confirm", userId: "u1"
+        });
+        await handleButton(confirm);
         assert.equal(session.battle.winner, "Slime");
-        console.log("PASS: participant forfeit ends battle + clears buttons");
+        assert.equal(confirm.calls.updates[0].components.length, 0);
+        console.log("PASS: confirmed forfeit ends battle");
+
+        // A stray cancel after the battle ended is still safe.
+        const cancel = mockButton({
+            customId: "battle:forfeit:cancel", userId: "u1"
+        });
+        await handleButton(cancel);
+        assert(
+            cancel.calls.updates[0].content.includes("cancelled")
+        );
+        console.log("PASS: forfeit cancel is safe");
+    }
+
+    {
+        // Out-of-turn player cannot confirm a forfeit for someone else.
+        const session = freshSession();
+        const confirm = mockButton({
+            customId: "battle:forfeit:confirm", userId: "u9"
+        });
+        await handleButton(confirm);
+        assert.equal(session.battle.status, "active");
+        assert(
+            confirm.calls.updates[0].content.includes("participants")
+        );
+        console.log("PASS: spectator cannot confirm a forfeit");
+        bs.forfeit(session, "u1");
     }
 
     {

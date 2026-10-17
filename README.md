@@ -103,8 +103,22 @@ Currently implemented:
 | `/battle-status` | Show the current battle in this channel |
 | `/battle-attack` | Normal attack on your turn |
 | `/battle-forfeit` | Forfeit a battle or withdraw/decline a challenge |
+| `/rpg` | Open the main menu dashboard (button-driven UI) |
 
 All player commands reply ephemerally and require `DATABASE_URL`.
+
+### `/rpg` dashboard
+
+`/rpg` opens an **ephemeral main menu** — only you can see and click it.
+Sections: Profile, My Characters, Create Character (a 5-field modal
+form), Select Active (a character dropdown), Battle (an opponent picker
+that sends a public challenge message with Accept/Decline buttons),
+and Help/Rules. Buttons on the dashboard are verified against the
+original `/rpg` invoker — other users' clicks are rejected.
+
+Dashboard menu buttons are stateless (they re-read the database on each
+click), so they **survive bot restarts**. Battle and challenge buttons
+do **not** — they depend on in-memory sessions (see below).
 
 ### Character creation rules
 
@@ -157,7 +171,13 @@ character ownership).
 - Two-player PvP battles over Discord: challenges (60s expiry,
   opponent-only accept), turn-based normal attacks with full combat
   mechanics (d20 contests, double attack on 20, reflect on defender 20,
-  COST gains), and forfeit.
+  COST gains), and forfeit with a confirmation step.
+- Button-driven UI: `/rpg` dashboard (profile, character list, modal
+  character creation, select-menu activation, opponent picker), a
+  public challenge message with Accept/Decline buttons, and a
+  persistent battle panel (HP bars, stats, COST, turn, recent log)
+  with Attack/Refresh/Forfeit buttons. Slash commands remain as
+  fallback and keep the panel in sync.
 
 ### Battle state is in-memory
 

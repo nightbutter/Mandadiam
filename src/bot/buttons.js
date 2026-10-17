@@ -1,13 +1,17 @@
+const {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
+} = require("discord.js");
 const { env } = require("../config/env");
 const battleService = require("../game/services/battleService");
 const {
     pushLog,
     buildBattleEmbed,
     buildBattleRow,
-    formatAttackReport,
-    mentionOwner
+    formatAttackReport
 } = require("./battleFormat");
-const { sendBattlePanel } = require("./battlePanel");
+const { sendBattlePanel, updateBattlePanel } = require("./battlePanel");
 
 // Dispatches MessageComponent button interactions. Every handler
 // re-validates state server-side — customIds are never trusted.
@@ -199,6 +203,8 @@ async function handleBattleRefresh(interaction) {
     });
 }
 
+// Step 1 — confirm prompt (ephemeral) so a stray click can't end
+// a battle. The actual forfeit runs only on battle:forfeit:confirm.
 async function handleBattleForfeit(interaction) {
     const session = battleService.getSession(interaction.channelId);
 
@@ -207,12 +213,53 @@ async function handleBattleForfeit(interaction) {
         return;
     }
 
-    const result = battleService.forfeit(session, interaction.user.id);
-
-    if (!result.ok) {
+    if (
+        !session.players.some(
+            p => p.discordId === interaction.user.id
+        )
+    ) {
         await safeReply(
             interaction, "Only battle participants can forfeit."
         );
+        return;
+    }
+
+    await interaction.reply({
+        content: "🏳️ Forfeit this battle? The opponent wins.",
+        ephemeral: true,
+        components: [
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId("battle:forfeit:confirm")
+                    .setLabel("Confirm Forfeit")
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId("battle:forfeit:cancel")
+                    .setLabel("Cancel")
+                    .setStyle(ButtonStyle.Secondary)
+            )
+        ]
+    });
+}
+
+async function handleForfeitConfirm(interaction) {
+    const session = battleService.getSession(interaction.channelId);
+
+    if (!session) {
+        await interaction.update({
+            content: STALE_MESSAGE,
+            components: []
+        });
+        return;
+    }
+
+    const result = battleService.forfeit(session, interaction.user.id);
+
+    if (!result.ok) {
+        await interaction.update({
+            content: "Only battle participants can forfeit.",
+            components: []
+        });
         return;
     }
 
@@ -223,8 +270,21 @@ async function handleBattleForfeit(interaction) {
         `**${result.winner.character.name}** wins!`
     );
 
+    // The public panel is a different message — edit it via the
+    // channel, since this click targets the ephemeral confirm prompt.
+    await updateBattlePanel(interaction.channel, session);
+
     await interaction.update({
-        embeds: [buildBattleEmbed(session)],
+        content:
+            `🏳️ You forfeited — **${result.winner.character.name}** ` +
+            `(<@${result.winner.discordId}>) wins.`,
+        components: []
+    });
+}
+
+async function handleForfeitCancel(interaction) {
+    await interaction.update({
+        content: "Forfeit cancelled — battle continues.",
         components: []
     });
 }
@@ -234,10 +294,18 @@ const handlers = {
     "challenge:decline": handleChallengeDecline,
     "battle:attack": handleBattleAttack,
     "battle:refresh": handleBattleRefresh,
-    "battle:forfeit": handleBattleForfeit
+    "battle:forfeit": handleBattleForfeit,
+    "battle:forfeit:confirm": handleForfeitConfirm,
+    "battle:forfeit:cancel": handleForfeitCancel
 };
 
 async function handleButton(interaction) {
+    if (interaction.customId.startsWith("menu:")) {
+        const { handleMenuButton } = require("./menu");
+        await handleMenuButton(interaction);
+        return;
+    }
+
     const handler = handlers[interaction.customId];
 
     if (!handler) {

@@ -1,6 +1,20 @@
 const { Events, MessageFlags } = require("discord.js");
 const { commands } = require("../commands");
 
+// Shared failure reply for component/modal interactions.
+async function safeFail(interaction) {
+    const reply = {
+        content: "Something went wrong with that action.",
+        ephemeral: true
+    };
+
+    if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(reply);
+    } else {
+        await interaction.reply(reply);
+    }
+}
+
 module.exports = {
     name: Events.InteractionCreate,
     once: false,
@@ -14,16 +28,33 @@ module.exports = {
                     `Button ${interaction.customId} failed:`, err
                 );
 
-                const reply = {
-                    content: "Something went wrong with that action.",
-                    ephemeral: true
-                };
+                await safeFail(interaction);
+            }
+            return;
+        }
 
-                if (interaction.replied || interaction.deferred) {
-                    await interaction.followUp(reply);
-                } else {
-                    await interaction.reply(reply);
-                }
+        if (interaction.isAnySelectMenu()) {
+            try {
+                const { handleSelectMenu } = require("../menu");
+                await handleSelectMenu(interaction);
+            } catch (err) {
+                console.error(
+                    `Select menu ${interaction.customId} failed:`, err
+                );
+                await safeFail(interaction);
+            }
+            return;
+        }
+
+        if (interaction.isModalSubmit()) {
+            try {
+                const { handleModalSubmit } = require("../menu");
+                await handleModalSubmit(interaction);
+            } catch (err) {
+                console.error(
+                    `Modal ${interaction.customId} failed:`, err
+                );
+                await safeFail(interaction);
             }
             return;
         }
