@@ -150,7 +150,21 @@ async function showBattle(interaction) {
         return;
     }
 
-    await interaction.update(views.battleView());
+    // Defer before the eligibility query — then render the picker
+    // from the database, not Discord's member list.
+    await interaction.deferUpdate();
+
+    const eligible = (await playerService.listChallengeable())
+        .filter(player =>
+            player.discord_id !== interaction.user.id &&
+            !battleService.isPlayerBusy(player.discord_id)
+        );
+
+    const shown = eligible.slice(0, views.MAX_OPPONENT_OPTIONS);
+
+    await interaction.editReply(
+        views.battleView(shown, { total: eligible.length })
+    );
 }
 
 async function handleRegister(interaction) {
@@ -346,11 +360,18 @@ async function handlePickCharacter(interaction) {
 }
 
 async function handlePickOpponent(interaction) {
-    const opponent = interaction.users.first();
+    const opponentId = interaction.values[0];
 
     // Acknowledge the selection before the character lookups —
     // prepareChallenge runs two sequential database calls.
     await interaction.deferUpdate();
+
+    // Resolve the real user when the client cache allows it; the
+    // mention + eligibility checks only need the id, and
+    // prepareChallenge re-validates everything server-side.
+    const opponent = (await interaction.client?.users
+        ?.fetch(opponentId)
+        .catch(() => null)) ?? { id: opponentId };
 
     const prepared = await prepareChallenge(interaction, opponent);
 

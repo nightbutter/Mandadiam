@@ -32,7 +32,15 @@ async function getProfile(discordId) {
     return { player, activeCharacter };
 }
 
+// Challenge eligibility source for the opponent picker — same rule
+// the challenge validator enforces (registered + active character).
+// Busy/self filtering happens at the call site.
+async function listChallengeable() {
+    return playerRepository.listChallengeable();
+}
+
 module.exports = {
     registerPlayer,
-    getProfile
+    getProfile,
+    listChallengeable
 };

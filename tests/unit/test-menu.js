@@ -72,6 +72,14 @@ function mockSelect({ customId, userId = "u1", ownerId,
     const base = mockComponent({ customId, userId, ownerId, ...rest });
     base.values = values;
     base.users = { first: () => users[0] };
+    // StringSelect opponent picks resolve via client.users.fetch;
+    // `users` fixtures stand in for Discord's resolved users.
+    base.client = {
+        users: {
+            fetch: async id =>
+                users.find(u => u.id === id) ?? { id, bot: false }
+        }
+    };
     base.channel = {
         send: async p => {
             base.calls.sent.push(p);
@@ -300,6 +308,7 @@ async function run() {
         const sel = mockSelect({
             customId: "menu:opponent",
             userId: "ghost_u",
+            values: ["u2"],
             users: [{ id: "u2", bot: false }]
         });
         await handleSelectMenu(sel);
@@ -314,6 +323,7 @@ async function run() {
         const sel = mockSelect({
             customId: "menu:opponent",
             userId: "ghost_u",
+            values: ["bot1"],
             users: [{ id: "bot1", bot: true }]
         });
         await handleSelectMenu(sel);

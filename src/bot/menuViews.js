@@ -6,7 +6,6 @@ const {
     ButtonBuilder,
     ButtonStyle,
     StringSelectMenuBuilder,
-    UserSelectMenuBuilder,
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
@@ -317,24 +316,64 @@ function selectCharacterView(characters) {
     };
 }
 
-function battleView() {
+// Opponent picker — a StringSelect fed by the eligibility query
+// (registered + active character + not busy), NOT a UserSelect: the
+// Discord-rendered user picker lists raw guild members, so freshly
+// joined/registered accounts can be missing and ineligible members
+// show up as trap options.
+const MAX_OPPONENT_OPTIONS = 25; // Discord select-menu cap.
+
+function battleView(opponents = [], { total = opponents.length } = {}) {
+    const select = new StringSelectMenuBuilder()
+        .setCustomId("menu:opponent")
+        .setPlaceholder(
+            opponents.length
+                ? "Select a player to challenge"
+                : "No eligible opponents right now"
+        )
+        .setDisabled(!opponents.length)
+        .addOptions(
+            opponents.length
+                ? opponents.map(player => ({
+                      label: String(player.username).slice(0, 100),
+                      value: String(player.discord_id),
+                      description:
+                          `Active: ${player.character_name}`.slice(0, 100)
+                  }))
+                : [{
+                      label: "Nobody to challenge",
+                      value: "none",
+                      description: "Ask a friend to /register"
+                  }]
+        );
+
+    let description =
+        "Pick an opponent below — they'll get a challenge " +
+        "message with Accept/Decline buttons.\n\n" +
+        "Only registered players with an active character " +
+        "are listed.";
+
+    if (total > opponents.length) {
+        description +=
+            `\n\nShowing ${opponents.length} of ${total} eligible ` +
+            "players — use `/battle-challenge` to pick anyone else.";
+    }
+
+    if (!opponents.length) {
+        description +=
+            "\n\nTo become challengeable: `/register`, create a " +
+            "character, and select it as active.";
+    }
+
     return {
         embeds: [
             new EmbedBuilder()
                 .setTitle("⚔️ Challenge a player")
                 .setColor(COLOR)
-                .setDescription(
-                    "Pick an opponent below — they'll get a challenge " +
-                    "message with Accept/Decline buttons.\n\n" +
-                    "They must be registered with an active character."
-                )
+                .setDescription(description)
         ],
         components: [
-            new ActionRowBuilder().addComponents(
-                new UserSelectMenuBuilder()
-                    .setCustomId("menu:opponent")
-                    .setPlaceholder("Select a player to challenge")
-            ),
+            new ActionRowBuilder().addComponents(select),
             backRow
         ]
     };
@@ -428,6 +467,7 @@ module.exports = {
     characterDetailView,
     uploadImageModal,
     selectCharacterView,
+    MAX_OPPONENT_OPTIONS,
     battleView,
     helpView,
     createCharacterModal

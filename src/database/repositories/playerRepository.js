@@ -50,9 +50,24 @@ async function setActiveCharacter(playerId, characterId) {
     return player ?? null;
 }
 
+// Players who can currently be challenged: registered AND holding a
+// valid active character (the join drops dangling active_character_id
+// rows the same way getActiveBattleCharacter does).
+async function listChallengeable() {
+    const { rows } = await pool.query(
+        `SELECT p.discord_id, p.username, c.name AS character_name
+         FROM players p
+         JOIN characters c ON c.id = p.active_character_id
+         ORDER BY LOWER(p.username), p.discord_id`
+    );
+
+    return rows;
+}
+
 module.exports = {
     createPlayer,
     registerPlayer,
     findByDiscordId,
-    setActiveCharacter
+    setActiveCharacter,
+    listChallengeable
 };

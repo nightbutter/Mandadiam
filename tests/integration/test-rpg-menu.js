@@ -80,6 +80,15 @@ function mockSelect(userId, customId, extra = {}) {
     const base = mockComponent({ customId, userId });
     base.values = extra.values ?? [];
     base.users = { first: () => extra.users?.[0] };
+    // Opponent StringSelect resolves discord ids through
+    // client.users.fetch — the options list itself is DB-backed.
+    base.client = {
+        users: {
+            fetch: async id =>
+                extra.users?.find(u => u.id === id) ??
+                { id, bot: false }
+        }
+    };
     return base;
 }
 
@@ -240,7 +249,7 @@ function mockSelect(userId, customId, extra = {}) {
 
         await characterService.selectCharacter(P2, "SingleInsert");
         const pick = mockSelect(P1, "menu:opponent", {
-            users: [{ id: P2, bot: false }]
+            values: [P2]
         });
         await handleSelectMenu(pick);
         test(
@@ -304,6 +313,85 @@ function mockSelect(userId, customId, extra = {}) {
             [P3]
         );
         test("exactly one player row", p3Count[0].n === 1);
+
+        // --- challengeable-opponent list (registration bug) --------
+
+        // A registered player with no character is NOT eligible.
+        let eligible = await playerService.listChallengeable();
+        test(
+            "registered-but-characterless player not listed",
+            !eligible.some(p => p.discord_id === P3)
+        );
+
+        // Eligible players appear immediately — no restart needed.
+        test(
+            "players with active characters are listed",
+            eligible.some(p => p.discord_id === P1) &&
+            eligible.some(p => p.discord_id === P2)
+        );
+
+        // The dashboard picker renders them (minus self).
+        const battleBtn = mockComponent({
+            customId: "menu:battle", userId: P1
+        });
+        await handleMenuButton(battleBtn);
+        const picker = battleBtn.calls.updates.at(-1)
+            .components[0].components[0];
+        // toJSON() mirrors the payload Discord receives — option
+        // builders keep the submitted id under data.value.
+        const pickIds = picker.toJSON().options.map(o => o.value);
+        test(
+            "picker lists eligible opponents",
+            pickIds.includes(P2)
+        );
+        test(
+            "picker excludes the challenger themself",
+            !pickIds.includes(P1)
+        );
+        test(
+            "picker excludes characterless players",
+            !pickIds.includes(P3)
+        );
+
+        // A player with a pending challenge drops out of the list.
+        const issue = bs.issueChallenge({
+            channelId: `${CHANNEL}_2`,
+            challengerId: P1, opponentId: P2
+        });
+        test("fixture challenge issued", issue.ok);
+        const busyBtn = mockComponent({
+            customId: "menu:battle", userId: P3
+        });
+        await handleMenuButton(busyBtn);
+        const busyIds = busyBtn.calls.updates.at(-1)
+            .components[0].components[0].toJSON().options
+            .map(o => o.value);
+        // Both parties of a pending challenge are busy — neither
+        // appears in a third player's picker.
+        test(
+            "busy challenger + opponent filtered from picker",
+            !busyIds.includes(P2) && !busyIds.includes(P1)
+        );
+        bs.cancelChallenge(`${CHANNEL}_2`, P1);
+
+        // Newly eligible (register + character + set active) shows up
+        // on the very next render.
+        const P4 = `${TAG}_p4`;
+        await playerService.registerPlayer(P4, "menu_four");
+        await characterService.createCharacter(P4, {
+            name: "Newbie", maxHp: 60, atk: 30, def: 30, spe: 30
+        });
+        test(
+            "character created but not active stays unlisted",
+            !(await playerService.listChallengeable())
+                .some(p => p.discord_id === P4)
+        );
+        await characterService.selectCharacter(P4, "Newbie");
+        test(
+            "newly eligible player appears without restart",
+            (await playerService.listChallengeable())
+                .some(p => p.discord_id === P4)
+        );
 
         console.log("\nRPG menu integration tests passed.");
     } finally {
