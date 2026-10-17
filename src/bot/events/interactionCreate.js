@@ -35,8 +35,13 @@ module.exports = {
 
         if (interaction.isAnySelectMenu()) {
             try {
-                const { handleSelectMenu } = require("../menu");
-                await handleSelectMenu(interaction);
+                if (interaction.customId.startsWith("battle:")) {
+                    const { handleBattleSelect } = require("../buttons");
+                    await handleBattleSelect(interaction);
+                } else {
+                    const { handleSelectMenu } = require("../menu");
+                    await handleSelectMenu(interaction);
+                }
             } catch (err) {
                 console.error(
                     `Select menu ${interaction.customId} failed:`, err

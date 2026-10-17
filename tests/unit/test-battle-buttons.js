@@ -156,7 +156,14 @@ async function run() {
     }
 
     {
-        const session = freshSession();
+        // Defender HP too high for any single attack (incl. double /
+        // crit) to end the battle — the turn advance stays
+        // deterministic.
+        const session = bs.startBattle(
+            "c1", player("u1", "Noctis"),
+            player("u2", "Slime", { hp: 500 }),
+            { firstRolls: [18], secondRolls: [12] }
+        ).session;
         const before = session.battle.turnNumber;
         const btn = mockButton({ customId: "battle:attack", userId: "u1" });
         await handleButton(btn);
@@ -183,9 +190,16 @@ async function run() {
             customId: "battle:attack", userId: "u1"
         });
 
-        // Deterministic big hit to finish in one attack.
-        // (real RNG inside — damage is enough regardless of rolls)
-        await handleButton(btn);
+        // Deterministic hit: d20 18 vs 7 (attacker wins, no
+        // reflection), d8 = 5 → 20 dmg ends the battle.
+        const rolls = [0.85, 0.3, 0.5];
+        const realRandom = Math.random;
+        Math.random = () => rolls.length ? rolls.shift() : 0.5;
+        try {
+            await handleButton(btn);
+        } finally {
+            Math.random = realRandom;
+        }
         assert(btn.calls.updates[0].components.length === 0);
         assert.equal(session.battle.status, "finished");
         console.log("PASS: finished battle disables action buttons");

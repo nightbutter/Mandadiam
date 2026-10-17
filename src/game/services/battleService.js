@@ -1,4 +1,5 @@
 const { createBattle, startTurn, performAction, endTurn } = require("../battle");
+const { getSkill } = require("../skills");
 
 // In-memory PvP battle sessions and challenges, keyed by Discord channel.
 // HP and COST are transient battle state, so sessions live in memory
@@ -11,7 +12,7 @@ const CHALLENGE_TTL_MS = 60_000;
 // Maps a characters-table row to the shape the combat engine expects:
 // base stats only — hp starts full, cost starts empty. Transient
 // battle state is never persisted back to the row.
-function toBattleCharacter(character) {
+function toBattleCharacter(character, skills = []) {
     return {
         name: character.name,
         hp: character.max_hp,
@@ -20,7 +21,8 @@ function toBattleCharacter(character) {
         def: character.def,
         spe: character.spe,
         cost: 0,
-        imageUrl: character.image_url ?? null
+        imageUrl: character.image_url ?? null,
+        skills
     };
 }
 
@@ -259,6 +261,96 @@ function attack(session, discordId, options = {}) {
     return { ok: true, result, finished: false, next };
 }
 
+// Skill attack — same lifecycle as attack() with extra server-side
+// gates: catalog lookup, per-character ownership, COST sufficiency,
+// and the skill's own condition. Any failure returns before
+// performAction, so HP/COST/turn/log are untouched and COST is never
+// charged for a rejected action.
+function useSkill(session, discordId, skillKey, options = {}) {
+    const { battle } = session;
+
+    if (battle.status !== "active") {
+        return { ok: false, error: "finished" };
+    }
+
+    if (!session.players.some(p => p.discordId === discordId)) {
+        return { ok: false, error: "not_participant" };
+    }
+
+    if (currentTurnPlayer(session)?.discordId !== discordId) {
+        return { ok: false, error: "not_your_turn" };
+    }
+
+    const skill = getSkill(skillKey);
+
+    if (!skill) {
+        return { ok: false, error: "unknown_skill" };
+    }
+
+    const attacker = battle.currentTurn?.character;
+
+    if (!attacker || !attacker.skills?.includes(skillKey)) {
+        return { ok: false, error: "skill_not_owned" };
+    }
+
+    const defender = battle.characters.find(c => c !== attacker);
+
+    if (!defender || defender.hp <= 0) {
+        return { ok: false, error: "invalid_target" };
+    }
+
+    const condition = skill.canUse(attacker, defender);
+
+    if (!condition.ok) {
+        return {
+            ok: false,
+            error: "condition_failed",
+            reason: condition.reason
+        };
+    }
+
+    // performAction charges the COST exactly once inside the engine —
+    // the service never spends COST itself.
+    const result = performAction(
+        battle,
+        { type: "skill", cost: skill.cost },
+        options
+    );
+
+    if (!result.success) {
+        const error =
+            result.message === "COST ไม่เพียงพอ"
+                ? "insufficient_cost"
+                : "action_failed";
+
+        return { ok: false, error, result };
+    }
+
+    result.skillKey = skillKey;
+    result.skillName = skill.name;
+
+    if (battle.status === "finished") {
+        battlesByChannel.delete(session.channelId);
+        return { ok: true, result, finished: true, winner: battle.winner };
+    }
+
+    endTurn(battle);
+
+    const next = startTurn(battle);
+
+    if (!next.success) {
+        battlesByChannel.delete(session.channelId);
+        return {
+            ok: true,
+            result,
+            finished: true,
+            winner: battle.winner ?? null
+        };
+    }
+
+    return { ok: true, result, finished: false, next };
+}
+
 function forfeit(session, discordId) {
     const loser = session.players.find(p => p.discordId === discordId);
 
@@ -291,5 +383,6 @@ module.exports = {
     currentTurnPlayer,
     opponentOf,
     attack,
+    useSkill,
     forfeit
 };

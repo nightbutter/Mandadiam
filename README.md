@@ -142,6 +142,39 @@ hosting**: if the message is deleted the portrait breaks. Validation
 accepts only `https` URLs on `cdn.discordapp.com` /
 `media.discordapp.net` with PNG/JPEG/WebP MIME + extension and ≤ 5 MB.
 
+### Skills
+
+Every character owns its own persisted skill records in
+`character_skills` (`character_id → skill_key`, `ON DELETE CASCADE`,
+composite PK prevents duplicates). The initial catalog has exactly
+three definitions in `src/game/skills.js`, so **every character's
+starting loadout is the same three skills** — the per-character rows
+exist so future catalogs can offer different loadouts. New characters
+are provisioned on creation; pre-skill characters are backfilled by the
+migration and lazily on first battle use.
+
+| Skill | COST | Condition |
+|---|---|---|
+| **Power Strike** | 3 | none |
+| **Piercing Strike** | 2 | target HP ≤ 50% of max |
+| **Desperation Burst** | 2 | your HP ≤ 40% of max |
+
+All skills resolve through the same combat engine as normal attacks
+(`max(0, d8 + ATK + SPE − DEF)`, d20 contests, double attack,
+reflection, crits — nothing duplicated). COST is spent exactly once per
+accepted action by `performAction`; a failed condition or insufficient
+COST rejects the action without touching HP, COST, dice, or the turn.
+
+**Using a skill**: on your turn in the battle panel, press
+**✨ Skills** → an ephemeral picker lists your skills with their COST
+and current availability (✓ ready / reason why not) → pick one. The
+panel updates in place with the result; spectators and out-of-turn
+clicks are rejected ephemerally. There is no skill slash command —
+the panel is the interface.
+
+Not implemented yet: skill assignment/editing UI, character-unique
+loadouts, status effects, cooldowns.
+
 ### Character creation rules
 
 New characters use a single **point-buy budget of 150** shared across
@@ -167,10 +200,11 @@ Apply the schema manually (never run automatically on bot startup):
 npm run migrate
 ```
 
-The migration is idempotent and creates `players`, `characters`, and
+The migration is idempotent and creates `players`, `characters`,
 `battles` (including the composite FKs that keep
 `players.active_character_id` and battle participants consistent with
-character ownership).
+character ownership), and `character_skills` (per-character equipped
+skills with a backfill for existing rows).
 
 ## Implemented
 
@@ -198,8 +232,12 @@ character ownership).
   character creation, select-menu activation, opponent picker), a
   public challenge message with Accept/Decline buttons, and a
   persistent battle panel (HP bars, stats, COST, turn, recent log)
-  with Attack/Refresh/Forfeit buttons. Slash commands remain as
-  fallback and keep the panel in sync.
+  with Attack/✨ Skills/Refresh/Forfeit buttons. Slash commands remain
+  as fallback and keep the panel in sync.
+- Character-owned skills: three-skill catalog (Power Strike,
+  Piercing Strike, Desperation Burst) persisted per character in
+  `character_skills`, equipped via an ephemeral select menu on the
+  battle panel.
 
 ### Battle state is in-memory
 

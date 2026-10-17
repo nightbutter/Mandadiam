@@ -9,6 +9,7 @@ const {
     pushLog,
     buildBattleEmbed,
     buildBattleRow,
+    buildSkillSelectMenu,
     formatAttackReport
 } = require("./battleFormat");
 const { sendBattlePanel, updateBattlePanel } = require("./battlePanel");
@@ -203,6 +204,106 @@ async function handleBattleRefresh(interaction) {
     });
 }
 
+// Opens an ephemeral skill picker for the current turn owner.
+async function handleBattleSkills(interaction) {
+    const session = battleService.getSession(interaction.channelId);
+
+    if (!session) {
+        await safeReply(interaction, STALE_MESSAGE);
+        return;
+    }
+
+    if (
+        battleService.currentTurnPlayer(session)?.discordId !==
+        interaction.user.id
+    ) {
+        await safeReply(
+            interaction,
+            session.players.some(
+                p => p.discordId === interaction.user.id
+            )
+                ? "It's not your turn yet."
+                : "Only battle participants can use skills."
+        );
+        return;
+    }
+
+    await interaction.reply({
+        content: "✨ Choose a skill:",
+        ephemeral: true,
+        components: [buildSkillSelectMenu(session)]
+    });
+}
+
+// The picked skill resolves through battleService.useSkill — the same
+// validation gates as buttons, then the shared combat engine.
+async function handleSkillSelect(interaction) {
+    const session = battleService.getSession(interaction.channelId);
+
+    if (!session) {
+        await interaction.update({
+            content: STALE_MESSAGE,
+            components: []
+        });
+        return;
+    }
+
+    const skillKey = interaction.values[0];
+    const outcome = battleService.useSkill(
+        session, interaction.user.id, skillKey
+    );
+
+    if (!outcome.ok) {
+        const messages = {
+            finished: "That battle is already finished.",
+            not_participant: "Only battle participants can use skills.",
+            not_your_turn: "It's not your turn yet.",
+            unknown_skill: "Unknown skill.",
+            skill_not_owned: "That skill isn't equipped.",
+            condition_failed: outcome.reason,
+            insufficient_cost: "Not enough COST.",
+            invalid_target: "No valid target.",
+            action_failed: outcome.result?.message ?? "That action failed."
+        };
+
+        await interaction.update({
+            content: `❌ ${messages[outcome.error] ?? "Skill failed."}`,
+            components: []
+        });
+        return;
+    }
+
+    const report = formatAttackReport(session, outcome.result);
+
+    pushLog(
+        session,
+        `✨ **${outcome.result.attacker}** used ` +
+        `**${outcome.result.skillName}** → ` +
+        `**${outcome.result.defender}**: ` +
+        `${outcome.result.damage} dmg` +
+        (outcome.result.outcome === "reflected" ? " (reflected)" : "") +
+        (outcome.result.outcome === "double_attack" ? " (double)" : "")
+    );
+
+    if (outcome.finished) {
+        const winner = battleCharacterByName(session, outcome.winner);
+        pushLog(
+            session,
+            `🏆 **${outcome.winner ?? "Nobody"}** ` +
+            `${winner ? `(<@${winner.discordId}>)` : ""} wins!`
+        );
+    }
+
+    // Acknowledge the select on the ephemeral picker, then edit the
+    // public panel through the channel like the forfeit flow does.
+    await interaction.update({
+        content: `✨ **${outcome.result.skillName}** used!`,
+        components: []
+    });
+
+    await updateBattlePanel(interaction.channel, session, report);
+}
+
 // Step 1 — confirm prompt (ephemeral) so a stray click can't end
 // a battle. The actual forfeit runs only on battle:forfeit:confirm.
 async function handleBattleForfeit(interaction) {
@@ -293,6 +394,7 @@ const handlers = {
     "challenge:accept": handleChallengeAccept,
     "challenge:decline": handleChallengeDecline,
     "battle:attack": handleBattleAttack,
+    "battle:skills": handleBattleSkills,
     "battle:refresh": handleBattleRefresh,
     "battle:forfeit": handleBattleForfeit,
     "battle:forfeit:confirm": handleForfeitConfirm,
@@ -316,4 +418,14 @@ async function handleButton(interaction) {
     await handler(interaction);
 }
 
-module.exports = { handleButton };
+// Select menus under the battle: prefix (skill picker).
+async function handleBattleSelect(interaction) {
+    if (interaction.customId === "battle:skill") {
+        await handleSkillSelect(interaction);
+        return;
+    }
+
+    await safeReply(interaction, "Unknown action.");
+}
+
+module.exports = { handleButton, handleBattleSelect };

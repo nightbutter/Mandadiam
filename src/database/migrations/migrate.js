@@ -60,6 +60,29 @@ CREATE TABLE IF NOT EXISTS battles (
 
 CREATE INDEX IF NOT EXISTS idx_battles_player_one ON battles (player_one_id);
 CREATE INDEX IF NOT EXISTS idx_battles_player_two ON battles (player_two_id);
+
+-- Phase 5: per-character equipped skills. Keys are validated against
+-- the skill catalog in application code; the composite PK prevents
+-- duplicate skills per character.
+CREATE TABLE IF NOT EXISTS character_skills (
+    character_id BIGINT NOT NULL REFERENCES characters (id) ON DELETE CASCADE,
+    skill_key    TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (character_id, skill_key)
+);
+
+-- Backfill the initial three-skill loadout for every existing
+-- character. ON CONFLICT keeps the migration idempotent.
+INSERT INTO character_skills (character_id, skill_key)
+    SELECT c.id, s.key
+    FROM characters c
+    CROSS JOIN (
+        VALUES
+            ('power_strike'),
+            ('piercing_strike'),
+            ('desperation_burst')
+    ) AS s (key)
+    ON CONFLICT DO NOTHING;
 `;
 
 async function migrate() {

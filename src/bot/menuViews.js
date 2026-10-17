@@ -344,10 +344,19 @@ function helpView() {
             {
                 name: "Battle",
                 value:
-                    "Normal attacks use d20 contests — ties reroll. " +
+                    "Attacks use d20 contests — ties reroll. " +
                     "d20 = 20 doubles the attack; a defending 20 reflects " +
                     "the hit. Damage is d8 + ATK − DEF (min 0), crits " +
                     "double. COST grows each turn, on hit and when hurt."
+            },
+            {
+                name: "Skills",
+                value:
+                    "Press ✨ **Skills** on your turn in the battle " +
+                    "panel. Skills use d8 + ATK + SPE − DEF.\n" +
+                    "• **Power Strike** — 3 COST, no condition\n" +
+                    "• **Piercing Strike** — 2 COST, target at ≤50% HP\n" +
+                    "• **Desperation Burst** — 2 COST, you at ≤40% HP"
             },
             {
                 name: "Slash commands (fallback)",

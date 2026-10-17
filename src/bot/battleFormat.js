@@ -4,8 +4,10 @@ const {
     EmbedBuilder,
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    StringSelectMenuBuilder
 } = require("discord.js");
+const { getSkill } = require("../game/skills");
 
 const MAX_LOG_LINES = 6;
 
@@ -119,6 +121,12 @@ function buildBattleRow(session) {
             .setStyle(ButtonStyle.Primary)
             .setDisabled(finished),
         new ButtonBuilder()
+            .setCustomId("battle:skills")
+            .setLabel("Skills")
+            .setEmoji("✨")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(finished),
+        new ButtonBuilder()
             .setCustomId("battle:refresh")
             .setLabel("Refresh")
             .setEmoji("🔄")
@@ -130,6 +138,48 @@ function buildBattleRow(session) {
             .setEmoji("🏳️")
             .setStyle(ButtonStyle.Danger)
             .setDisabled(finished)
+    );
+}
+
+// Select menu listing the acting character's equipped skills. Each
+// option shows COST and whether the condition is currently met — the
+// service re-validates everything server-side on use.
+function buildSkillSelectMenu(session) {
+    const actor = session.battle.currentTurn?.character;
+    const defender = session.battle.characters.find(c => c !== actor);
+
+    const options = (actor?.skills ?? []).map(key => {
+        const skill = getSkill(key);
+
+        if (!skill) {
+            return null;
+        }
+
+        const affordable = actor.cost >= skill.cost;
+        const condition = skill.canUse(actor, defender);
+        const usable = affordable && condition.ok;
+
+        const status = !affordable
+            ? `✗ needs ${skill.cost} COST`
+            : condition.ok
+                ? "✓ ready"
+                : `✗ ${condition.reason}`;
+
+        return {
+            label: `${skill.name} — ${skill.cost} COST`,
+            value: skill.key,
+            description: `${status} · ${skill.description}`.slice(0, 100)
+        };
+    }).filter(Boolean);
+
+    return new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId("battle:skill")
+            .setPlaceholder("Choose a skill")
+            .addOptions(options.length ? options : [{
+                label: "No skills available",
+                value: "none"
+            }])
     );
 }
 
@@ -192,17 +242,21 @@ function formatAttackReport(session, result) {
 
     const lines = [];
 
+    const verb = result.skillName
+        ? `uses **${result.skillName}**`
+        : "attacks";
+
     if (result.outcome === "reflected") {
         lines.push(
-            `⚔️ <@${attacker.discordId}> attacks — but ` +
+            `⚔️ <@${attacker.discordId}> ${verb} — but ` +
             `${result.defender} rolls d20 **20** and reflects it!`,
             `🎲 d8 ${result.reflectRoll} → ${result.damage} damage back`,
             `${result.attacker}: HP ${result.remainingHp}/${attacker.character.maxHp}`
         );
     } else {
         const title = result.outcome === "double_attack"
-            ? `⚔️ <@${attacker.discordId}> attacks — d20 **20**, double attack!`
-            : `⚔️ <@${attacker.discordId}> attacks`;
+            ? `⚔️ <@${attacker.discordId}> ${verb} — d20 **20**, double attack!`
+            : `⚔️ <@${attacker.discordId}> ${verb}`;
 
         lines.push(
             title,
@@ -215,8 +269,9 @@ function formatAttackReport(session, result) {
     }
 
     lines.push(
-        `COST — ${result.attacker}: ${result.attackerCost} · ` +
-        `${result.defender}: ${result.defenderCost}`
+        `COST — ${result.attacker}: ${result.attackerCost}` +
+        (result.skillCost ? ` (−${result.skillCost} skill)` : "") +
+        ` · ${result.defender}: ${result.defenderCost}`
     );
 
     return lines.join("\n");
@@ -229,5 +284,6 @@ module.exports = {
     formatAttackReport,
     pushLog,
     buildBattleEmbed,
-    buildBattleRow
+    buildBattleRow,
+    buildSkillSelectMenu
 };

@@ -1,5 +1,6 @@
 const playerRepository = require("../database/repositories/playerRepository");
 const characterRepository = require("../database/repositories/characterRepository");
+const skillRepository = require("../database/repositories/skillRepository");
 const { toBattleCharacter } = require("../game/services/battleService");
 
 // Character management for Discord commands. The invoking user's own
@@ -93,6 +94,9 @@ async function createCharacter(discordId, input) {
         const character = await characterRepository.createCharacter(
             player.id, values
         );
+
+        // Equip the initial skill loadout — idempotent.
+        await skillRepository.provision(character.id);
 
         return { ok: true, character };
     } catch (err) {
@@ -297,7 +301,31 @@ async function getActiveBattleCharacter(discordId) {
         return { ok: false, error: "no_active_character" };
     }
 
-    return { ok: true, character: toBattleCharacter(character) };
+    // Lazy provisioning — characters created before skills existed
+    // get their initial loadout on first battle use.
+    let skills = await skillRepository.listKeys(character.id);
+
+    if (!skills.length) {
+        await skillRepository.provision(character.id);
+        skills = await skillRepository.listKeys(character.id);
+    }
+
+    return {
+        ok: true,
+        character: toBattleCharacter(character, skills)
+    };
+}
+
+// Equipped skill keys for a character owned by the caller.
+async function listCharacterSkills(discordId, characterId) {
+    const owned = await ownedCharacter(discordId, characterId);
+
+    if (!owned.ok) {
+        return owned;
+    }
+
+    const skills = await skillRepository.listKeys(owned.character.id);
+    return { ok: true, character: owned.character, skills };
 }
 
 module.exports = {
@@ -311,6 +339,7 @@ module.exports = {
     IMAGE_RULES,
     validateImageAttachment,
     getOwnedCharacter: ownedCharacter,
+    listCharacterSkills,
     setCharacterImage,
     clearCharacterImage
 };
