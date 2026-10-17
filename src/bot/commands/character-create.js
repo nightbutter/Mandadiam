@@ -4,40 +4,42 @@ const { ensureDatabase } = require("./helpers");
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("character-create")
-        .setDescription("Create a new character")
+        .setDescription(
+            "Create a character — HP + ATK + DEF + SPE must total 150 or less"
+        )
         .addStringOption(option =>
             option.setName("name")
-                .setDescription("Character name (unique to you)")
+                .setDescription("Character name (unique to you, max 30 chars)")
                 .setRequired(true)
-                .setMaxLength(50)
+                .setMaxLength(30)
         )
         .addIntegerOption(option =>
             option.setName("max_hp")
-                .setDescription("Maximum HP (1-9999)")
+                .setDescription("Maximum HP (50-150, costs 1 point each)")
                 .setRequired(true)
-                .setMinValue(1)
-                .setMaxValue(9999)
+                .setMinValue(50)
+                .setMaxValue(150)
         )
         .addIntegerOption(option =>
             option.setName("atk")
-                .setDescription("Attack (0-999)")
+                .setDescription("Attack (0-30)")
                 .setRequired(true)
                 .setMinValue(0)
-                .setMaxValue(999)
+                .setMaxValue(30)
         )
         .addIntegerOption(option =>
             option.setName("def")
-                .setDescription("Defense (0-999)")
+                .setDescription("Defense (0-30)")
                 .setRequired(true)
                 .setMinValue(0)
-                .setMaxValue(999)
+                .setMaxValue(30)
         )
         .addIntegerOption(option =>
             option.setName("spe")
-                .setDescription("Speed (0-999)")
+                .setDescription("Speed (0-30)")
                 .setRequired(true)
                 .setMinValue(0)
-                .setMaxValue(999)
+                .setMaxValue(30)
         ),
     async execute(interaction) {
         if (!(await ensureDatabase(interaction))) {

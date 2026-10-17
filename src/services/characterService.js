@@ -6,10 +6,14 @@ const { toBattleCharacter } = require("../game/services/battleService");
 // player row is always resolved from their Discord snowflake — callers
 // never supply a player id.
 
-const LIMITS = {
-    name: { min: 1, max: 50 },
-    maxHp: { min: 1, max: 9999 },
-    stat: { min: 0, max: 999 }
+// Official character creation rules (approved): a single point-buy
+// budget of 150 shared across max_hp + atk + def + spe. HP costs one
+// point per hit point; each stat is capped at 30.
+const RULES = {
+    name: { min: 1, max: 30 },
+    maxHp: { min: 50, max: 150 },
+    stat: { min: 0, max: 30 },
+    budget: 150
 };
 
 function isIntInRange(value, min, max) {
@@ -21,9 +25,9 @@ function validateCharacterInput(input) {
     const errors = [];
     const name = typeof input.name === "string" ? input.name.trim() : "";
 
-    if (name.length < LIMITS.name.min || name.length > LIMITS.name.max) {
+    if (name.length < RULES.name.min || name.length > RULES.name.max) {
         errors.push(
-            `name must be ${LIMITS.name.min}-${LIMITS.name.max} characters`
+            `name must be ${RULES.name.min}-${RULES.name.max} characters`
         );
     }
 
@@ -34,13 +38,26 @@ function validateCharacterInput(input) {
         spe: input.spe
     };
 
-    if (!isIntInRange(stats.max_hp, LIMITS.maxHp.min, LIMITS.maxHp.max)) {
-        errors.push(`max_hp must be ${LIMITS.maxHp.min}-${LIMITS.maxHp.max}`);
+    if (!isIntInRange(stats.max_hp, RULES.maxHp.min, RULES.maxHp.max)) {
+        errors.push(
+            `max_hp must be ${RULES.maxHp.min}-${RULES.maxHp.max}`
+        );
     }
 
     for (const key of ["atk", "def", "spe"]) {
-        if (!isIntInRange(stats[key], LIMITS.stat.min, LIMITS.stat.max)) {
-            errors.push(`${key} must be ${LIMITS.stat.min}-${LIMITS.stat.max}`);
+        if (!isIntInRange(stats[key], RULES.stat.min, RULES.stat.max)) {
+            errors.push(`${key} must be ${RULES.stat.min}-${RULES.stat.max}`);
+        }
+    }
+
+    if (!errors.length) {
+        const spent = stats.max_hp + stats.atk + stats.def + stats.spe;
+
+        if (spent > RULES.budget) {
+            errors.push(
+                `stats total ${spent} exceeds the ${RULES.budget} ` +
+                `point budget (hp + atk + def + spe)`
+            );
         }
     }
 
@@ -146,7 +163,7 @@ async function getActiveBattleCharacter(discordId) {
 }
 
 module.exports = {
-    LIMITS,
+    RULES,
     getActiveBattleCharacter,
     validateCharacterInput,
     createCharacter,

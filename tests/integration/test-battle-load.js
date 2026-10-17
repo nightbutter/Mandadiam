@@ -21,7 +21,7 @@ function test(title, result) {
         await playerService.registerPlayer(P2, "tester_two");
 
         const oddStats = {
-            name: "Oddball", maxHp: 7777, atk: 111, def: 55, spe: 33
+            name: "Oddball", maxHp: 90, atk: 30, def: 10, spe: 20
         };
         const created = await characterService.createCharacter(P1, oddStats);
         await characterService.createCharacter(
@@ -36,8 +36,8 @@ function test(title, result) {
         );
         test(
             "stored stats match submitted input exactly",
-            rawRow.max_hp === 7777 && rawRow.atk === 111 &&
-            rawRow.def === 55 && rawRow.spe === 33
+            rawRow.max_hp === 90 && rawRow.atk === 30 &&
+            rawRow.def === 10 && rawRow.spe === 20
         );
 
         // --- no active character yet ---
@@ -53,8 +53,8 @@ function test(title, result) {
         test(
             "active character loads in combat shape",
             loaded.ok &&
-            loaded.character.hp === 7777 &&
-            loaded.character.atk === 111 &&
+            loaded.character.hp === 90 &&
+            loaded.character.atk === 30 &&
             loaded.character.cost === 0
         );
         test(

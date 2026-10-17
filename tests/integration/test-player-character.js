@@ -62,6 +62,20 @@ const CHAR = { name: "Noctis", maxHp: 100, atk: 20, def: 5, spe: 4 };
                 .error === "invalid"
         );
 
+        const overBudget = await characterService.createCharacter(
+            P1, { name: "Cheater", maxHp: 150, atk: 30, def: 30, spe: 30 }
+        );
+        test(
+            "over-budget stats rejected at service level",
+            overBudget.error === "invalid" &&
+            overBudget.details.some(d => d.includes("budget"))
+        );
+
+        const { rows: [noRow] } = await pool.query(
+            `SELECT count(*)::int AS n FROM characters WHERE name = 'Cheater'`
+        );
+        test("rejected insert left no row", noRow.n === 0);
+
         const created = await characterService.createCharacter(P1, CHAR);
         test("character created for own player", created.ok);
 
@@ -124,6 +138,22 @@ const CHAR = { name: "Noctis", maxHp: 100, atk: 20, def: 5, spe: 4 };
             (await characterService.selectCharacter(P1, "Ghost"))
                 .error === "not_found"
         );
+
+        // The intentional test character must remain untouched by anything
+        // this suite does (it predates the suite and must not be modified).
+        const { rows: [legacy] } = await pool.query(
+            `SELECT max_hp, atk, def, spe FROM characters
+             WHERE name = 'noctis'`
+        );
+        if (legacy) {
+            test(
+                "existing 'noctis' test character unchanged",
+                legacy.max_hp === 9999 && legacy.atk === 100 &&
+                legacy.def === 50 && legacy.spe === 50
+            );
+        } else {
+            console.log("SKIP: 'noctis' test character not present");
+        }
 
         console.log("\nPlayer & character tests passed.");
     } finally {

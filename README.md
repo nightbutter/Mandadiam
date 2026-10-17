@@ -96,10 +96,23 @@ Currently implemented:
 | `/register` | Register as a player (idempotent) |
 | `/profile` | Show your profile and active character |
 | `/characters` | List your characters |
-| `/character-create` | Create a character (name, HP, ATK, DEF, SPE) |
+| `/character-create` | Create a character — see creation rules below |
 | `/character-select` | Set your active character by name |
 
 All player commands reply ephemerally and require `DATABASE_URL`.
+
+### Character creation rules
+
+New characters use a single **point-buy budget of 150** shared across
+`max_hp + atk + def + spe`:
+
+- `max_hp`: 50–150 (costs 1 point per hit point)
+- `atk`, `def`, `spe`: 0–30 each
+- `name`: 1–30 characters, unique per player
+
+Validation runs server-side in `characterService` regardless of the
+Discord option bounds. Characters created before these rules (e.g. the
+intentional `noctis` test character) are grandfathered and unchanged.
 
 ## Database
 
