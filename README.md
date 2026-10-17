@@ -59,7 +59,9 @@ cp .env.example .env   # then fill in the values
 ## Tests
 
 ```bash
-npm test
+npm test                # all suites
+npm run test:unit       # game-logic tests only (no database needed)
+npm run test:integration # database tests only (needs DATABASE_URL)
 ```
 
 `tests/run.js` runs every file in `tests/unit/`. Integration tests in

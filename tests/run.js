@@ -32,19 +32,25 @@ function run(file) {
     return result.status === 0;
 }
 
+const suite = process.argv[2] ?? "all";
+
 let passed = 0;
 let failed = 0;
 
-for (const file of listTests("unit")) {
-    run(file) ? passed++ : failed++;
-}
-
-if (process.env.DATABASE_URL && process.env.DATABASE_URL.trim()) {
-    for (const file of listTests("integration")) {
+if (suite === "all" || suite === "unit") {
+    for (const file of listTests("unit")) {
         run(file) ? passed++ : failed++;
     }
-} else {
-    console.log("\nSKIP: integration tests — DATABASE_URL is not set.");
+}
+
+if (suite === "all" || suite === "integration") {
+    if (process.env.DATABASE_URL && process.env.DATABASE_URL.trim()) {
+        for (const file of listTests("integration")) {
+            run(file) ? passed++ : failed++;
+        }
+    } else {
+        console.log("\nSKIP: integration tests — DATABASE_URL is not set.");
+    }
 }
 
 console.log(`\n${passed} passed, ${failed} failed.`);
