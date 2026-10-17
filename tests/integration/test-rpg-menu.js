@@ -5,6 +5,7 @@ const characterService = require("../../src/services/characterService");
 const bs = require("../../src/game/services/battleService");
 const { handleModalSubmit, handleSelectMenu, handleMenuButton } =
     require("../../src/bot/menu");
+const uiSessions = require("../../src/bot/uiSessions");
 
 // Dashboard flows against real Neon: character creation via modal,
 // active-character selection, and challenge through the opponent picker.
@@ -19,10 +20,17 @@ function test(title, result) {
     console.log(`PASS: ${title}`);
 }
 
+let nextId = 0;
+
 function mockComponent({ customId, userId, ownerId }) {
     const calls = {
         replies: [], updates: [], modals: [], sent: []
     };
+
+    // Model the production shape: interactionMetadata (not the
+    // deprecated interaction field) + a bound UI session.
+    const messageId = `m${++nextId}`;
+    uiSessions.bind(messageId, ownerId ?? userId);
 
     return {
         calls,
@@ -30,7 +38,8 @@ function mockComponent({ customId, userId, ownerId }) {
         channelId: CHANNEL,
         user: { id: userId, username: `user_${userId}` },
         message: {
-            interaction: { user: { id: ownerId ?? userId } },
+            id: messageId,
+            interactionMetadata: { user: { id: ownerId ?? userId } },
             edit: async p => calls.edits?.push(p)
         },
         channel: {
@@ -84,11 +93,11 @@ function mockSelect(userId, customId, extra = {}) {
         await handleModalSubmit(modal);
         test(
             "modal create succeeds within budget (150)",
-            modal.calls.replies[0].content.includes("MenuKnight")
+            modal.calls.updates[0].embeds[0].data.description.includes("MenuKnight")
         );
         test(
             "success reply offers Select as Active",
-            modal.calls.replies[0].components[0].components[0]
+            modal.calls.updates[0].components[0].components[0]
                 .data.custom_id.startsWith("menu:setactive:")
         );
 
@@ -99,8 +108,8 @@ function mockSelect(userId, customId, extra = {}) {
         await handleModalSubmit(modal);
         test(
             "duplicate name via modal rejected",
-            modal.calls.replies[0].content.includes("same name") ||
-            modal.calls.replies[0].content.includes("that name")
+            modal.calls.updates[0].embeds[0].data.description.includes("same name") ||
+            modal.calls.updates[0].embeds[0].data.description.includes("that name")
         );
 
         modal = mockModal(P1, {
@@ -110,11 +119,11 @@ function mockSelect(userId, customId, extra = {}) {
         await handleModalSubmit(modal);
         test(
             "budget 240 rejected with readable errors",
-            modal.calls.replies[0].content.includes("Invalid stats")
+            modal.calls.updates[0].embeds[0].data.description.includes("Invalid stats")
         );
         test(
             "error reply offers form retry",
-            modal.calls.replies[0].components[0].components[0]
+            modal.calls.updates[0].components[0].components[0]
                 .data.custom_id === "menu:create"
         );
 
@@ -124,7 +133,7 @@ function mockSelect(userId, customId, extra = {}) {
         await handleModalSubmit(modal);
         test(
             "exactly 150 points accepted",
-            modal.calls.replies[0].content.includes("Edge150")
+            modal.calls.updates[0].embeds[0].data.description.includes("Edge150")
         );
 
         modal = mockModal(P1, {
@@ -133,7 +142,7 @@ function mockSelect(userId, customId, extra = {}) {
         await handleModalSubmit(modal);
         test(
             "151 points rejected",
-            modal.calls.replies[0].content.includes("Invalid stats")
+            modal.calls.updates[0].embeds[0].data.description.includes("Invalid stats")
         );
 
         modal = mockModal(P1, {
@@ -142,7 +151,7 @@ function mockSelect(userId, customId, extra = {}) {
         await handleModalSubmit(modal);
         test(
             "non-integer field rejected",
-            modal.calls.replies[0].content.includes("Invalid stats")
+            modal.calls.updates[0].embeds[0].data.description.includes("Invalid stats")
         );
 
         // Double submission creates exactly one character.

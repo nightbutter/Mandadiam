@@ -13,6 +13,7 @@ const playerService = require("../services/playerService");
 const characterService = require("../services/characterService");
 const battleService = require("../game/services/battleService");
 const views = require("./menuViews");
+const uiSessions = require("./uiSessions");
 const { prepareChallenge, trackChallengeMessage } =
     require("./challengeFlow");
 
@@ -30,13 +31,38 @@ function backRow() {
     );
 }
 
-// The dashboard is an ephemeral reply to /rpg — the component's
-// message remembers the original interaction and its invoker.
+// Ownership is verified against the server-side session registry
+// first (works for any message we created and bound), falling back to
+// Discord-provided interaction metadata. Message#interaction is the
+// deprecated field — API no longer sends it on ephemeral or
+// modal-response messages, which is why a metadata-only check broke.
+// Fails closed: no session + no metadata = not the owner.
 function ownsDashboard(interaction) {
-    return (
-        interaction.message?.interaction?.user?.id ===
-        interaction.user.id
-    );
+    const message = interaction.message;
+
+    if (!message) {
+        return false;
+    }
+
+    if (uiSessions.ownerOf(message.id) === interaction.user.id) {
+        return true;
+    }
+
+    const origin = message.interactionMetadata ?? message.interaction;
+    return origin?.user?.id === interaction.user.id;
+}
+
+// Replies privately and binds the new message id to the clicker so its
+// buttons can be validated even without interaction metadata.
+async function replyOwned(interaction, payload) {
+    const message = await interaction.reply({
+        ...payload,
+        ephemeral: true,
+        fetchReply: true
+    });
+
+    uiSessions.bind(message, interaction.user.id);
+    return message;
 }
 
 async function rejectUnlessOwner(interaction) {
@@ -314,6 +340,18 @@ function menuRow(...buttons) {
     return new ActionRowBuilder().addComponents(...buttons);
 }
 
+// Edits the dashboard in place on modal submit — ModalSubmit.update()
+// targets the message that opened the modal, so all resulting buttons
+// stay on the session-bound dashboard message. Falls back to a bound
+// private reply when the original message is gone.
+async function updateDashboard(interaction, view) {
+    try {
+        await interaction.update(view);
+    } catch {
+        await replyOwned(interaction, view);
+    }
+}
+
 async function handleCreateModal(interaction) {
     const result = await characterService.createCharacter(
         interaction.user.id,
@@ -327,22 +365,31 @@ async function handleCreateModal(interaction) {
     );
 
     if (!result.ok) {
-        const content = result.error === "not_registered"
+        const description = result.error === "not_registered"
             ? "You are not registered yet — use /register first."
             : result.error === "duplicate_name"
                 ? "You already have a character with that name."
                 : `Invalid stats:\n• ${result.details.join("\n• ")}`;
 
-        await interaction.reply({
-            content,
-            ephemeral: true,
+        await updateDashboard(interaction, {
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle("✨ Create character")
+                    .setColor(0xe67e22)
+                    .setDescription(description)
+            ],
             components: [
                 menuRow(
                     new ButtonBuilder()
                         .setCustomId("menu:create")
                         .setLabel("Open form again")
                         .setEmoji("✨")
-                        .setStyle(ButtonStyle.Primary)
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId("menu:main")
+                        .setLabel("Back to Menu")
+                        .setEmoji("⬅️")
+                        .setStyle(ButtonStyle.Secondary)
                 )
             ]
         });
@@ -351,12 +398,16 @@ async function handleCreateModal(interaction) {
 
     const character = result.character;
 
-    await interaction.reply({
-        content:
-            `✨ Created **${character.name}** — HP ${character.max_hp}, ` +
-            `ATK ${character.atk}, DEF ${character.def}, ` +
-            `SPE ${character.spe}.`,
-        ephemeral: true,
+    await updateDashboard(interaction, {
+        embeds: [
+            new EmbedBuilder()
+                .setTitle("✨ Character created")
+                .setDescription(
+                    `**${character.name}** — HP ${character.max_hp}, ` +
+                    `ATK ${character.atk}, DEF ${character.def}, ` +
+                    `SPE ${character.spe}.`
+                )
+        ],
         components: [
             menuRow(
                 new ButtonBuilder()
