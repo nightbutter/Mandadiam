@@ -14,7 +14,6 @@ const characterService = require("../services/characterService");
 const battleService = require("../game/services/battleService");
 const views = require("./menuViews");
 const uiSessions = require("./uiSessions");
-const uploadSessions = require("./uploadSessions");
 const { prepareChallenge, trackChallengeMessage } =
     require("./challengeFlow");
 
@@ -225,9 +224,9 @@ async function showCharacterDetail(interaction, characterId) {
     );
 }
 
-// Starts a pending upload session bound to THIS user + THIS character
-// and swaps the dashboard to the upload prompt. The expiry callback
-// edits the prompt when the session lapses.
+// Opens the native file-upload modal — the user picks the image
+// directly in Discord's UI; no channel message is needed. Ownership
+// is checked before opening AND again on submit.
 async function handleSetImage(interaction, characterId) {
     const owned = await characterService.getOwnedCharacter(
         interaction.user.id, characterId
@@ -241,35 +240,7 @@ async function handleSetImage(interaction, characterId) {
         return;
     }
 
-    const promptMessage = interaction.message;
-
-    uploadSessions.start(
-        interaction.user.id, owned.character.id, () => {
-            promptMessage.edit({
-                embeds: [
-                    new EmbedBuilder()
-                        .setTitle("🖼️ Upload expired")
-                        .setDescription(
-                            "The upload timed out — press " +
-                            "**Set Image** again to retry."
-                        )
-                ],
-                components: [
-                    new ActionRowBuilder().addComponents(
-                        new ButtonBuilder()
-                            .setCustomId("menu:chars")
-                            .setLabel("Back to Characters")
-                            .setEmoji("⬅️")
-                            .setStyle(ButtonStyle.Secondary)
-                    )
-                ]
-            }).catch(() => {});
-        }
-    );
-
-    await interaction.update(
-        views.uploadPromptView(owned.character)
-    );
+    await interaction.showModal(views.uploadImageModal(owned.character));
 }
 
 async function handleRemoveImage(interaction, characterId) {
@@ -292,11 +263,6 @@ async function handleRemoveImage(interaction, characterId) {
             result.character, profile?.player.active_character_id
         )
     );
-}
-
-async function handleCancelUpload(interaction, characterId) {
-    uploadSessions.cancel(interaction.user.id);
-    await showCharacterDetail(interaction, characterId);
 }
 
 const buttonHandlers = {
@@ -336,11 +302,6 @@ async function handleMenuButton(interaction) {
 
     if (customId.startsWith("menu:imgdel:")) {
         await handleRemoveImage(interaction, customId.slice(12));
-        return;
-    }
-
-    if (customId.startsWith("menu:imgcancel:")) {
-        await handleCancelUpload(interaction, customId.slice(15));
         return;
     }
 
@@ -545,9 +506,73 @@ async function handleCreateModal(interaction) {
     });
 }
 
+// Handles the portrait-upload modal — modal:image:<characterId>. The
+// id is only a routing hint; setCharacterImage re-verifies that the
+// submitter owns the character before writing.
+async function handleImageModal(interaction, characterId) {
+    const file = interaction.fields
+        .getUploadedFiles("img")?.first() ?? null;
+
+    const fail = async description => updateDashboard(interaction, {
+        embeds: [
+            new EmbedBuilder()
+                .setTitle("🖼️ Portrait not saved")
+                .setColor(0xe67e22)
+                .setDescription(description)
+        ],
+        components: [
+            menuRow(
+                new ButtonBuilder()
+                    .setCustomId(`menu:img:${characterId}`)
+                    .setLabel("Try again")
+                    .setEmoji("🖼️")
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId("menu:chars")
+                    .setLabel("Back to Characters")
+                    .setEmoji("⬅️")
+                    .setStyle(ButtonStyle.Secondary)
+            )
+        ]
+    });
+
+    const validation = characterService.validateImageAttachment(file);
+
+    if (!validation.ok) {
+        await fail(validation.reason ?? "Attach a valid image file.");
+        return;
+    }
+
+    const result = await characterService.setCharacterImage(
+        interaction.user.id, Number(characterId), validation.url
+    );
+
+    if (!result.ok) {
+        await fail(
+            "Couldn't save the image — that character isn't yours " +
+            "or no longer exists."
+        );
+        return;
+    }
+
+    const profile = await playerService.getProfile(interaction.user.id);
+
+    await updateDashboard(
+        interaction,
+        views.characterDetailView(
+            result.character, profile?.player.active_character_id
+        )
+    );
+}
+
 async function handleModalSubmit(interaction) {
     if (!env.databaseUrl) {
         await interaction.reply({ content: NO_DB, ephemeral: true });
+        return;
+    }
+
+    if (interaction.customId.startsWith("modal:image:")) {
+        await handleImageModal(interaction, interaction.customId.slice(12));
         return;
     }
 

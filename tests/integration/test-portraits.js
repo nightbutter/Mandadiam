@@ -138,6 +138,107 @@ function test(title, result) {
         const s2 = bs.getSession(`${TAG}_chan`);
         bs.forfeit(s2, P1);
 
+        // --- dashboard modal flow (Phase 4.4) ---
+
+        const { handleMenuButton, handleModalSubmit } =
+            require("../../src/bot/menu");
+        const uiSessions = require("../../src/bot/uiSessions");
+
+        let nextMsg = 0;
+
+        function mockComponent(customId, userId) {
+            const calls = {
+                replies: [], updates: [], modals: []
+            };
+            const messageId = `m_${++nextMsg}`;
+            uiSessions.bind(messageId, userId);
+            return {
+                calls,
+                customId,
+                channelId: `${TAG}_chan`,
+                user: { id: userId, username: "u" },
+                message: {
+                    id: messageId,
+                    interactionMetadata: { user: { id: userId } }
+                },
+                reply: async p => calls.replies.push(p),
+                update: async p => calls.updates.push(p),
+                showModal: async m => calls.modals.push(m),
+                followUp: async p => calls.replies.push(p)
+            };
+        }
+
+        function mockImageModal(userId, characterId, file) {
+            const base = mockComponent(
+                `modal:image:${characterId}`, userId
+            );
+            base.fields = {
+                getUploadedFiles: () =>
+                    file ? { first: () => file, size: 1 } : null
+            };
+            return base;
+        }
+
+        const imgBtn = mockComponent(`menu:img:${knight.id}`, P1);
+        await handleMenuButton(imgBtn);
+        test(
+            "Set Image opens the native upload modal",
+            imgBtn.calls.modals.length === 1 &&
+            imgBtn.calls.modals[0].toJSON()
+                .components[0].component.type === 19
+        );
+
+        const imgSubmit = mockImageModal(P1, knight.id, {
+            name: "new.png", contentType: "image/png",
+            size: 4096, url: "https://cdn.discordapp.com/a/b/new.png"
+        });
+        await handleModalSubmit(imgSubmit);
+        test(
+            "modal upload refreshes detail view",
+            imgSubmit.calls.updates[0].embeds[0].data.title
+                .includes("Knight")
+        );
+        test(
+            "detail view shows new portrait",
+            imgSubmit.calls.updates[0].embeds[0].data.image.url
+                .includes("new.png")
+        );
+
+        // Foreign modal submit — forged character id must not write.
+        const forge = mockImageModal(P2, knight.id, {
+            name: "evil.png", contentType: "image/png",
+            size: 100, url: "https://cdn.discordapp.com/a/b/e.png"
+        });
+        await handleModalSubmit(forge);
+        const { rows: [unchanged] } = await pool.query(
+            `SELECT image_url FROM characters WHERE id = $1`,
+            [knight.id]
+        );
+        test(
+            "forged modal submit cannot write foreign portrait",
+            unchanged.image_url.includes("new.png")
+        );
+
+        // DB failure propagates to the interactionCreate error
+        // boundary (which answers the user) — it must not write.
+        const original = pool.query;
+        pool.query = async () => {
+            throw new Error("simulated outage");
+        };
+
+        const dbFail = mockImageModal(P1, knight.id, {
+            name: "x.png", contentType: "image/png",
+            size: 100, url: "https://cdn.discordapp.com/a/b/x.png"
+        });
+        let threw = false;
+        try {
+            await handleModalSubmit(dbFail);
+        } catch (err) {
+            threw = /simulated outage/.test(err.message);
+        }
+        pool.query = original;
+        test("database failure reaches the error boundary", threw);
+
         // --- remove image restores default ---
 
         const cleared = await characterService.clearCharacterImage(
@@ -152,13 +253,19 @@ function test(title, result) {
         // --- existing data untouched ---
 
         const { rows: [noctis] } = await pool.query(
-            `SELECT name, image_url FROM characters
-             WHERE name = 'noctis' LIMIT 1`
+            `SELECT name, max_hp, atk, def, spe, image_url
+             FROM characters WHERE name = 'noctis' LIMIT 1`
         );
         if (noctis) {
             test(
-                "existing 'noctis' record untouched (image NULL)",
-                noctis.image_url === null
+                "existing 'noctis' stats untouched",
+                noctis.max_hp === 9999 && noctis.atk === 100 &&
+                noctis.def === 50 && noctis.spe === 50
+            );
+            test(
+                "existing 'noctis' image is NULL or a CDN URL",
+                noctis.image_url === null ||
+                noctis.image_url.startsWith("https://")
             );
         }
 

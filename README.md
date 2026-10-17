@@ -36,9 +36,6 @@ src/
 - Node.js 24.x
 - A Neon PostgreSQL database
 - A Discord application + bot token (for running the bot)
-- The **Message Content** privileged intent must be enabled in the
-  Developer Portal for the in-channel portrait upload flow
-  (`/character-image` works without it).
 
 ## Installation
 
@@ -130,14 +127,14 @@ Each character has a nullable `image_url`. Portraits appear on the
 main menu, profile, character detail view, and the battle panel
 (thumbnail = the fighter to act, author icon = the other participant).
 
-Two ways to set an image:
+Two ways to set an image — **neither requires sending a channel
+message**:
 
+- **Dashboard**: My Characters → pick a character → **🖼️ Set Image**
+  opens Discord's native file-upload modal — choose the file, submit,
+  and the detail view refreshes.
 - **`/character-image`** — attach a PNG/JPEG/WebP file (max 5 MB),
   optionally naming a character (defaults to the active one).
-- **Dashboard**: My Characters → pick a character → **🖼️ Set Image**
-  opens a 90-second upload session; send the image as a message in the
-  same channel. Only the session owner's message is accepted, and
-  invalid files can be retried until it expires or is cancelled.
 
 Images are stored as **Discord CDN attachment URLs** — they remain
 available while the upload message exists. This is **not permanent

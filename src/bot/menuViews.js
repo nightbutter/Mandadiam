@@ -9,7 +9,9 @@ const {
     UserSelectMenuBuilder,
     ModalBuilder,
     TextInputBuilder,
-    TextInputStyle
+    TextInputStyle,
+    LabelBuilder,
+    FileUploadBuilder
 } = require("discord.js");
 const { RULES } = require("../services/characterService");
 
@@ -249,31 +251,29 @@ function characterDetailView(character, activeCharacterId) {
     };
 }
 
-// Explains the upload step while a session is pending.
-function uploadPromptView(character) {
-    return {
-        embeds: [
-            new EmbedBuilder()
-                .setTitle(`🖼️ Upload portrait — ${character.name}`)
-                .setColor(COLOR)
+// Native file-upload modal — Label (type 18) wrapping a FileUpload
+// component (type 19), submitted via fields.getUploadedFiles().
+// The character id rides in the modal customId as a routing hint only;
+// ownership is re-verified server-side on submit.
+function uploadImageModal(character) {
+    return new ModalBuilder()
+        .setCustomId(`modal:image:${character.id}`)
+        .setTitle(`Portrait — ${character.name.slice(0, 35)}`)
+        .setLabelComponents(
+            new LabelBuilder()
+                .setLabel("Portrait image (PNG/JPEG/WebP, max 5 MB)")
                 .setDescription(
-                    "**Send the image as a message in this channel** " +
-                    "within 90 seconds.\n\n" +
-                    "PNG, JPEG, or WebP — max 5 MB.\n\n" +
-                    "_The image is hosted by Discord's CDN and stays " +
-                    "available while the message exists — it is not " +
-                    "permanent storage._"
+                    "Choose a file — the image is hosted on Discord's " +
+                    "CDN while the message exists."
                 )
-        ],
-        components: [
-            new ActionRowBuilder().addComponents(
-                menuButton(
-                    `menu:imgcancel:${character.id}`,
-                    "Cancel Upload", "❌", ButtonStyle.Secondary
+                .setFileUploadComponent(
+                    new FileUploadBuilder()
+                        .setCustomId("img")
+                        .setMinValues(1)
+                        .setMaxValues(1)
+                        .setRequired(true)
                 )
-            )
-        ]
-    };
+        );
 }
 
 function selectCharacterView(characters) {
@@ -403,7 +403,7 @@ module.exports = {
     profileView,
     charactersView,
     characterDetailView,
-    uploadPromptView,
+    uploadImageModal,
     selectCharacterView,
     battleView,
     helpView,

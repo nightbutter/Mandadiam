@@ -1,11 +1,12 @@
 const assert = require("node:assert/strict");
 const { validateImageAttachment, IMAGE_RULES } =
     require("../../src/services/characterService");
-const uploadSessions = require("../../src/bot/uploadSessions");
-const messageCreate = require("../../src/bot/events/messageCreate");
+const { handleModalSubmit, handleMenuButton } =
+    require("../../src/bot/menu");
+const { uploadImageModal } = require("../../src/bot/menuViews");
 const { pool } = require("../../src/database/db");
 
-console.log("=== Portrait Validation & Upload Session Tests ===");
+console.log("=== Portrait Validation & Upload Modal Tests ===");
 
 const CDN = "https://cdn.discordapp.com/attachments/1/2/img.png";
 
@@ -19,14 +20,42 @@ function attachment(overrides = {}) {
     };
 }
 
-function mockMessage(authorId, att = null) {
-    const calls = { replies: [] };
+let nextId = 0;
+
+function mockComponent({ customId, userId = "u1", ownerId }) {
+    const messageId = `m${++nextId}`;
+    const message = {
+        id: messageId,
+        interactionMetadata: { user: { id: ownerId ?? userId } },
+        edit: async () => {}
+    };
+
+    const calls = { replies: [], updates: [], modals: [] };
+
     return {
         calls,
-        author: { id: authorId, bot: false },
-        attachments: { first: () => att },
-        reply: async p => calls.replies.push(p)
+        customId,
+        message,
+        user: { id: userId, username: `user_${userId}` },
+        reply: async p => {
+            calls.replies.push(p);
+            return { id: `m${++nextId}` };
+        },
+        update: async p => calls.updates.push(p),
+        showModal: async m => calls.modals.push(m),
+        followUp: async p => calls.replies.push(p)
     };
+}
+
+function mockImageModal({ userId = "u1", characterId = "42", file }) {
+    const base = mockComponent({
+        customId: `modal:image:${characterId}`, userId
+    });
+    base.fields = {
+        getUploadedFiles: () =>
+            file ? { first: () => file, size: 1 } : null
+    };
+    return base;
 }
 
 async function run() {
@@ -65,72 +94,75 @@ async function run() {
         console.log(`PASS: ${title}`);
     }
 
-    // --- session lifecycle ---
+    // --- upload modal builder ---
 
     {
-        uploadSessions.start("u1", 42);
-        assert.equal(uploadSessions.get("u1").characterId, 42);
-        console.log("PASS: session starts for user + character");
-
-        // A second start replaces the first session.
-        uploadSessions.start("u1", 43);
-        assert.equal(uploadSessions.get("u1").characterId, 43);
-        console.log("PASS: new upload replaces pending session");
-
-        uploadSessions.cancel("u1");
-        assert.equal(uploadSessions.get("u1"), null);
-        console.log("PASS: cancel clears session");
-
-        uploadSessions.start("u1", 42, null, -1);
-        assert.equal(uploadSessions.get("u1"), null);
-        console.log("PASS: expired session is rejected");
-
-        assert.equal(uploadSessions.get("stranger"), null);
-        console.log("PASS: no session for other users");
+        const modal = uploadImageModal({ id: 42, name: "Knight" });
+        const json = modal.toJSON();
+        assert.equal(json.custom_id, "modal:image:42");
+        assert.equal(json.components[0].component.type, 19);
+        console.log("PASS: upload modal carries FileUpload component");
     }
 
-    // --- messageCreate handler ---
+    // --- Set Image button opens the modal ---
 
     {
-        // No session → message ignored silently.
-        const msg = mockMessage("u_none", attachment());
-        await messageCreate.execute(msg);
-        assert.equal(msg.calls.replies.length, 0);
-        console.log("PASS: messages without session are ignored");
+        // Unregistered owner of dashboard → ownership check fails.
+        const btn = mockComponent({
+            customId: "menu:img:42", userId: "ghost_u"
+        });
+        await handleMenuButton(btn);
+        assert.equal(btn.calls.modals.length, 0);
+        assert(
+            btn.calls.replies[0].content.includes("Couldn't load")
+        );
+        console.log("PASS: Set Image for unregistered user rejected");
+    }
 
-        // Bot messages ignored even with forged session.
-        uploadSessions.start("botmsg", 1);
-        const botMsg = mockMessage("botmsg", attachment());
-        botMsg.author.bot = true;
-        await messageCreate.execute(botMsg);
-        assert.equal(botMsg.calls.replies.length, 0);
-        console.log("PASS: bot messages are ignored");
-        uploadSessions.cancel("botmsg");
+    // --- modal submit paths ---
 
-        // Invalid attachment → helpful error, session stays open.
-        uploadSessions.start("u_bad", 42);
-        const bad = mockMessage("u_bad", attachment({
-            contentType: "image/gif"
-        }));
-        await messageCreate.execute(bad);
-        assert(bad.calls.replies[0].includes("PNG"));
-        assert(uploadSessions.get("u_bad"));
-        console.log("PASS: invalid attachment errors but keeps session");
+    {
+        // Missing file → validation failure view, no writes.
+        const modal = mockImageModal({ file: null });
+        await handleModalSubmit(modal);
+        assert.equal(
+            modal.calls.updates[0].embeds[0].data.title,
+            "🖼️ Portrait not saved"
+        );
+        console.log("PASS: missing file rejected with retry view");
 
-        // Another user's message is never consumed by u_bad's session.
-        const other = mockMessage("u_other", attachment());
-        await messageCreate.execute(other);
-        assert.equal(other.calls.replies.length, 0);
-        console.log("PASS: another user's message cannot fill session");
+        // Invalid file type.
+        const badType = mockImageModal({
+            file: attachment({ contentType: "image/gif" })
+        });
+        await handleModalSubmit(badType);
+        assert(
+            badType.calls.updates[0].embeds[0].data.description
+                .includes("PNG")
+        );
+        console.log("PASS: invalid type rejected via dashboard");
 
-        // Valid attachment but unregistered user → session consumed,
-        // friendly failure, nothing persisted.
-        uploadSessions.start("u_ghost", 42);
-        const ghost = mockMessage("u_ghost", attachment());
-        await messageCreate.execute(ghost);
-        assert(ghost.calls.replies[0].includes("isn't yours"));
-        assert.equal(uploadSessions.get("u_ghost"), null);
-        console.log("PASS: unregistered uploader fails closed");
+        // Oversized file.
+        const big = mockImageModal({
+            file: attachment({ size: IMAGE_RULES.maxBytes + 1 })
+        });
+        await handleModalSubmit(big);
+        assert(
+            big.calls.updates[0].embeds[0].data.description
+                .includes("MB")
+        );
+        console.log("PASS: oversized file rejected via dashboard");
+
+        // Valid file but unregistered/foreign character → fail closed.
+        const ghost = mockImageModal({
+            userId: "ghost_u", characterId: "1", file: attachment()
+        });
+        await handleModalSubmit(ghost);
+        assert(
+            ghost.calls.updates[0].embeds[0].data.description
+                .includes("isn't yours")
+        );
+        console.log("PASS: submit for non-owned character rejected");
     }
 
     console.log("\nPortrait unit tests passed.");
