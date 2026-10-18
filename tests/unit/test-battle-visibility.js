@@ -2,7 +2,8 @@ const assert = require("node:assert/strict");
 const bs = require("../../src/game/services/battleService");
 const {
     buildPrivateView,
-    buildBattleRow
+    buildBattleRow,
+    buildBattleEmbed
 } = require("../../src/bot/battleFormat");
 const {
     sendPrivatePanels,
@@ -127,6 +128,115 @@ function cleanup(session) {
 }
 
 async function run() {
+    // --- root-cause regression: DM interactions require Partials.Channel
+    // Without it discord.js drops DM button clicks before routing —
+    // panels send fine (REST) but every click dies → stranded battle.
+
+    {
+        const { createClient } = require("../../src/bot/client");
+        const { Partials, GatewayIntentBits } = require("discord.js");
+        const client = createClient();
+        assert(client.options.partials?.includes(Partials.Channel));
+        assert(client.options.intents.has(GatewayIntentBits.Guilds));
+        client.destroy();
+        console.log("PASS: client enables Partials.Channel for DM clicks");
+    }
+
+    // --- initiative pending: the reported deadlock state ----------------
+    // Public row is slim (correct — DMs delivered), roll button lives
+    // only in the expected roller's private view, embed hints at DMs.
+
+    {
+        const started = bs.startBattle(
+            `vis_${++channelSeq}`,
+            player("u1", "Hero"),
+            player("u2", "Foe")
+        );
+        const session = started.session;
+        assert.equal(session.pending?.type, "initiative");
+
+        const pub = customIds({ components: [buildBattleRow(session)] });
+        assert(!pub.some(id => id?.startsWith("battle:roll:")));
+        assert(pub.includes("battle:refresh"));
+
+        const rollId = `battle:roll:${session.pending.id}`;
+        const u1ids = customIds(buildPrivateView(session, "u1"));
+        const u2ids = customIds(buildPrivateView(session, "u2"));
+        assert(u1ids.includes(rollId));
+        assert(!u2ids.some(id => id?.startsWith("battle:roll:")));
+
+        const dice = buildBattleEmbed(session).data.fields.find(
+            f => f.name.includes("Dice")
+        );
+        assert(dice.value.includes("DM"));
+        console.log("PASS: initiative pending — roll in roller's DM only");
+
+        // Both roll → initiative resolves → winner sees action controls.
+        bs.recordRoll(session, "u1", 18);
+        bs.recordRoll(session, "u2", 5);
+        assert(!session.pending);
+        assert(session.battle.currentTurn?.character);
+        const actor = session.players.find(
+            p => p.character === session.battle.currentTurn.character
+        );
+        const actorIds = customIds(
+            buildPrivateView(session, actor.discordId)
+        );
+        assert(actorIds.includes("battle:attack"));
+        console.log("PASS: initiative resolves into first-turn controls");
+        cleanup(session);
+    }
+
+    // --- public Refresh resends a lost DM panel -------------------------
+
+    {
+        const session = startSession();
+        const users = new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]);
+        const client = mockClient(users);
+        await sendPrivatePanels(client, session);
+        assert.equal(users.get("u1").sent.length, 1);
+
+        // u1 lost their DM → public Refresh resends it, row stays slim.
+        const btn = mockDmButton({
+            customId: "battle:refresh",
+            userId: "u1",
+            channelId: session.channelId,
+            client
+        });
+        await handleButton(btn);
+        assert.equal(users.get("u1").sent.length, 2);
+        assert.equal(users.get("u2").sent.length, 1); // edited, not resent
+        assert.equal(session.dmFailed.size, 0);
+        assert(
+            customIds(btn.calls.updates[0]).includes("battle:refresh")
+        );
+        console.log("PASS: Refresh resends a lost DM panel");
+
+        // Resend fails → dmFailed → clicker's row gains real controls.
+        const u1 = users.get("u1");
+        const okSend = u1.channel.send;
+        u1.channel.send = async () => {
+            throw new Error("Cannot send messages to this user");
+        };
+        const btn2 = mockDmButton({
+            customId: "battle:refresh",
+            userId: "u1",
+            channelId: session.channelId,
+            client
+        });
+        await handleButton(btn2);
+        assert(session.dmFailed.has("u1"));
+        assert(
+            customIds(btn2.calls.updates[0]).includes("battle:attack")
+        );
+        u1.channel.send = okSend;
+        console.log("PASS: failed resend flags dmFailed → fallback row");
+        cleanup(session);
+    }
+
     // --- session carries private-panel state ----------------------------
 
     {

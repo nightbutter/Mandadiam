@@ -73,6 +73,14 @@ function characterField(session, character) {
     };
 }
 
+// While private DM panels carry the controls, public viewers need a
+// pointer — Refresh doubles as "resend my panel".
+function dmHint(session, label) {
+    return session.dmFailed?.size
+        ? ""
+        : `\n*${label} sent via DM — Refresh resends yours*`;
+}
+
 // The persistent battle panel embed. `report` is the latest action's
 // formatted text; the rolling log is always appended.
 function buildBattleEmbed(session, report = null) {
@@ -117,7 +125,8 @@ function buildBattleEmbed(session, report = null) {
                 ? `Finished — winner: **${battle.winner ?? "none"}**`
                 : turnPlayer
                     ? `#${battle.turnNumber} — <@${turnPlayer.discordId}> ` +
-                        "to act"
+                        "to act" +
+                        (session.pending ? "" : dmHint(session, "controls"))
                     : "Rolling for initiative…",
         inline: true
     });
@@ -129,7 +138,9 @@ function buildBattleEmbed(session, report = null) {
         if (expected) {
             embed.addFields({
                 name: "🎲 Dice",
-                value: `Waiting for ${expected.text}`,
+                value:
+                    `Waiting for ${expected.text}` +
+                    dmHint(session, "roll button"),
                 inline: true
             });
         }

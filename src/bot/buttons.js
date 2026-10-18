@@ -389,6 +389,11 @@ async function handleBattleRefresh(interaction) {
     }
 
     if (interaction.channelId === session.channelId) {
+        // Refresh doubles as "resend my controls": drop the clicker's
+        // stored panel so a lost or never-seen DM is resent fresh,
+        // then render the public row with the updated dmFailed state.
+        session.privatePanels?.delete(interaction.user.id);
+        await updatePrivatePanels(interaction.client, session);
         await interaction.update({
             embeds: [buildBattleEmbed(session)],
             components: [buildBattleRow(session)]
