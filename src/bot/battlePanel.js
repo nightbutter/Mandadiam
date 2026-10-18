@@ -19,8 +19,9 @@ async function sendBattlePanel(channel, session, report = null) {
 }
 
 // Edits the existing panel message. Returns null if the message is
-// gone (deleted manually or after a restart) — callers may send a
-// fresh panel as a fallback.
+// gone (deleted manually or after a restart) — only a genuine
+// Unknown Message clears the stored id, so transient API errors
+// never orphan the canonical panel or trigger a duplicate send.
 async function updateBattlePanel(channel, session, report = null) {
     if (!session.panelMessageId) {
         return null;
@@ -39,8 +40,12 @@ async function updateBattlePanel(channel, session, report = null) {
         });
 
         return message;
-    } catch {
-        session.panelMessageId = null;
+    } catch (err) {
+        if (err?.code === 10008) {
+            // Message truly deleted — drop the reference so callers
+            // can deliberately send a fresh canonical panel.
+            session.panelMessageId = null;
+        }
         return null;
     }
 }
@@ -125,9 +130,24 @@ async function updatePrivatePanels(client, session) {
         if (panel) {
             try {
                 await panel.message.edit(payload);
+                session.dmFailed.delete(player.discordId);
                 continue;
-            } catch {
-                // Fall through — try resending below.
+            } catch (err) {
+                if (err?.code !== 10008) {
+                    // Not a deleted message — likely transient or the
+                    // DM became unreachable. Keep the stored panel
+                    // (no duplicate send) and flag the fallback so
+                    // public controls stay usable; the next update
+                    // retries the edit.
+                    session.dmFailed.add(player.discordId);
+                    console.warn(
+                        `[battle] DM panel edit failed for ` +
+                        `${player.discordId}: ` +
+                        `${err?.code ?? err?.message ?? err}`
+                    );
+                    continue;
+                }
+                // 10008 — the DM message was deleted; resend below.
             }
         }
 
@@ -168,7 +188,15 @@ async function refreshBattleViews(interaction, session, report = null) {
         const channel = await resolvePublicChannel(interaction, session);
 
         if (channel) {
-            await updateBattlePanel(channel, session, report);
+            const updated = await updateBattlePanel(
+                channel, session, report
+            );
+
+            // Canonical panel was deleted mid-battle — deliberately
+            // replace it once rather than leaving the channel blind.
+            if (!updated && !session.panelMessageId) {
+                await sendBattlePanel(channel, session, report);
+            }
         }
     }
 }

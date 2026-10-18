@@ -73,26 +73,57 @@ function characterField(session, character) {
     };
 }
 
-// While private DM panels carry the controls, public viewers need a
-// pointer — Refresh doubles as "resend my panel".
-function dmHint(session, label) {
-    return session.dmFailed?.size
-        ? ""
-        : `\n*${label} sent via DM — Refresh resends yours*`;
+// One-line battle state for the embed title — public panels can't be
+// personalised, so this stays viewer-neutral.
+function stateBadge(session) {
+    const { battle } = session;
+    if (battle.status === "finished") {
+        return "🏆 FINISHED";
+    }
+    if (session.pending?.type === "initiative") {
+        return "🎲 INITIATIVE";
+    }
+    if (session.pending) {
+        return "🎲 ROLLING";
+    }
+    return `⚔️ TURN ${battle.turnNumber}`;
+}
+
+// The single "who acts / who rolls next" line — initiative pending,
+// manual-roll pending, and active turns all collapse into this field
+// so a rendered panel can never mix a resolved initiative result
+// with a stale "Rolling for initiative…" label.
+function currentLine(session) {
+    const { battle } = session;
+
+    if (battle.status === "finished") {
+        return `Finished — winner: **${battle.winner ?? "none"}**`;
+    }
+
+    if (session.pending) {
+        const expected = describeRoll(session.pending);
+        return expected
+            ? `Waiting — ${expected.text}`
+            : "Resolving dice…";
+    }
+
+    const turnPlayer = session.players.find(
+        p => p.character === battle.currentTurn?.character
+    );
+
+    return turnPlayer
+        ? `<@${turnPlayer.discordId}> to act`
+        : "Rolling for initiative…";
 }
 
 // The persistent battle panel embed. `report` is the latest action's
-// formatted text; the rolling log is always appended.
+// formatted text; a bounded tail of the rolling log is appended.
 function buildBattleEmbed(session, report = null) {
     const { battle } = session;
     const [a, b] = battle.characters;
 
     const embed = new EmbedBuilder()
-        .setTitle(
-            battle.status === "finished"
-                ? `🏆 Battle Finished — ${a.name} vs ${b.name}`
-                : `⚔️ ${a.name} vs ${b.name}`
-        )
+        .setTitle(`${stateBadge(session)} — ${a.name} vs ${b.name}`)
         .setColor(
             battle.status === "finished" ? 0x95a5a6 : 0xe74c3c
         )
@@ -100,10 +131,6 @@ function buildBattleEmbed(session, report = null) {
             characterField(session, a),
             characterField(session, b)
         );
-
-    const turnPlayer = session.players.find(
-        p => p.character === battle.currentTurn?.character
-    );
 
     // One embed can only carry one thumbnail + one author icon:
     // the active fighter gets the thumbnail, the other goes top-left.
@@ -119,36 +146,15 @@ function buildBattleEmbed(session, report = null) {
     });
 
     embed.addFields({
-        name: "Turn",
-        value:
-            battle.status === "finished"
-                ? `Finished — winner: **${battle.winner ?? "none"}**`
-                : turnPlayer
-                    ? `#${battle.turnNumber} — <@${turnPlayer.discordId}> ` +
-                        "to act" +
-                        (session.pending ? "" : dmHint(session, "controls"))
-                    : "Rolling for initiative…",
-        inline: true
+        name: "⚡ Current",
+        value: currentLine(session),
+        inline: false
     });
-
-    // Pending manual-roll state — who's expected and which die.
-    if (session.pending && battle.status !== "finished") {
-        const expected = describeRoll(session.pending);
-
-        if (expected) {
-            embed.addFields({
-                name: "🎲 Dice",
-                value:
-                    `Waiting for ${expected.text}` +
-                    dmHint(session, "roll button"),
-                inline: true
-            });
-        }
-    }
 
     const description = [
         report,
-        session.log.length ? session.log.join("\n") : null
+        // Bounded tail — the embed would reject an unbounded log.
+        session.log.length ? session.log.slice(-8).join("\n") : null
     ].filter(Boolean).join("\n\n");
 
     if (description) {
@@ -156,7 +162,9 @@ function buildBattleEmbed(session, report = null) {
     }
 
     embed.setFooter({
-        text: "In-memory battle — state is lost on bot restart"
+        text:
+            "📋 My Controls — your private actions · " +
+            "🔄 Refresh — resync panels"
     });
 
     return embed;

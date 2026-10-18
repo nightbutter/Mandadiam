@@ -44,6 +44,49 @@ function sessionFor(interaction) {
         null;
 }
 
+// A click on a dead session (battle ended/deleted) — strip the stale
+// message's controls in place instead of leaving a clickable corpse.
+// Falls back to a plain ephemeral rejection when the source message
+// can't be updated (missing reference, expired token).
+async function deadSessionAck(interaction) {
+    if (interaction.message) {
+        const healed = await interaction.update({
+            content: "That battle has ended.",
+            embeds: [],
+            components: []
+        }).catch(() => null);
+
+        if (healed !== null) {
+            return;
+        }
+    }
+
+    await safeReply(interaction, STALE_MESSAGE);
+}
+
+// Rejection on a private surface (DM panel or ephemeral view) — heal
+// the stale message into the clicker's CURRENT private view instead
+// of stacking a new ephemeral on top of it. Public-surface and
+// non-participant rejections keep the plain ephemeral notice.
+async function rejectOrHeal(interaction, session, message) {
+    const participant = session.players.some(
+        p => p.discordId === interaction.user.id
+    );
+
+    if (participant && !isPanelMessage(interaction, session)) {
+        const healed = await interaction.update(
+            buildPrivateView(session, interaction.user.id)
+        ).catch(() => null);
+
+        if (healed !== null) {
+            await refreshBattleViews(interaction, session);
+            return;
+        }
+    }
+
+    await safeReply(interaction, message);
+}
+
 // Acknowledge the click on whichever surface it came from — the
 // public panel message gets the shared embed + shared row, a DM panel
 // or an ephemeral "My Controls" reply gets that player's private
@@ -194,15 +237,16 @@ async function handleBattleAttack(interaction) {
     const session = sessionFor(interaction);
 
     if (!session) {
-        await safeReply(interaction, STALE_MESSAGE);
+        await deadSessionAck(interaction);
         return;
     }
 
     const outcome = battleService.attack(session, interaction.user.id);
 
     if (!outcome.ok) {
-        await safeReply(
+        await rejectOrHeal(
             interaction,
+            session,
             GATE_MESSAGES[outcome.error] ?? "That action failed."
         );
         return;
@@ -303,15 +347,16 @@ async function handleRoll(interaction) {
     const session = sessionFor(interaction);
 
     if (!session) {
-        await safeReply(interaction, STALE_MESSAGE);
+        await deadSessionAck(interaction);
         return;
     }
 
     const actionId = interaction.customId.slice("battle:roll:".length);
 
     if (!session.pending || session.pending.id !== actionId) {
-        await safeReply(
+        await rejectOrHeal(
             interaction,
+            session,
             "That roll is no longer needed."
         );
         return;
@@ -333,8 +378,9 @@ async function handleRoll(interaction) {
             invalid_die: "Invalid die."
         };
 
-        await safeReply(
+        await rejectOrHeal(
             interaction,
+            session,
             messages[outcome.error] ?? "That roll failed."
         );
         return;
@@ -354,7 +400,7 @@ async function handleRoll(interaction) {
             session,
             `🎲 <@${interaction.user.id}> rolled ` +
             `**${rolled.value}** — ` +
-            `next: ${outcome.expected.text}`
+            `next: ${outcome.expected?.text ?? "the next roll"}`
         );
         return;
     }
@@ -386,7 +432,7 @@ async function handleBattleRefresh(interaction) {
     const session = sessionFor(interaction);
 
     if (!session) {
-        await safeReply(interaction, STALE_MESSAGE);
+        await deadSessionAck(interaction);
         return;
     }
 
@@ -424,6 +470,10 @@ async function handleMyPanel(interaction) {
         return;
     }
 
+    // Opportunistic heal: surface the DM panel too — a lost or
+    // deleted one is resent, an existing one is edited in place.
+    await updatePrivatePanels(interaction.client, session);
+
     await interaction.reply({
         ...buildPrivateView(session, interaction.user.id),
         ephemeral: true
@@ -435,7 +485,7 @@ async function handleBattleSkills(interaction) {
     const session = sessionFor(interaction);
 
     if (!session) {
-        await safeReply(interaction, STALE_MESSAGE);
+        await deadSessionAck(interaction);
         return;
     }
 
@@ -443,8 +493,9 @@ async function handleBattleSkills(interaction) {
         battleService.currentTurnPlayer(session)?.discordId !==
         interaction.user.id
     ) {
-        await safeReply(
+        await rejectOrHeal(
             interaction,
+            session,
             session.players.some(
                 p => p.discordId === interaction.user.id
             )
@@ -510,7 +561,8 @@ async function handleSkillSelect(interaction) {
 
     await refreshBattleViews(
         interaction, session,
-        `✨ Skill declared — ${outcome.expected.text}`
+        `✨ Skill declared — ` +
+        (outcome.expected?.text ?? "roll when ready")
     );
 }
 
@@ -521,7 +573,7 @@ async function handleBattleUltimate(interaction) {
     const session = sessionFor(interaction);
 
     if (!session) {
-        await safeReply(interaction, STALE_MESSAGE);
+        await deadSessionAck(interaction);
         return;
     }
 
@@ -529,8 +581,9 @@ async function handleBattleUltimate(interaction) {
         battleService.currentTurnPlayer(session)?.discordId !==
         interaction.user.id
     ) {
-        await safeReply(
+        await rejectOrHeal(
             interaction,
+            session,
             session.players.some(
                 p => p.discordId === interaction.user.id
             )
@@ -603,7 +656,8 @@ async function handleUltimateConfirm(interaction) {
     // channel, same as the forfeit flow.
     await refreshBattleViews(
         interaction, session,
-        `💥 Ultimate declared — ${outcome.expected.text}`
+        `💥 Ultimate declared — ` +
+        (outcome.expected?.text ?? "roll when ready")
     );
 
     await interaction.update({
@@ -625,7 +679,7 @@ async function handleBattleForfeit(interaction) {
     const session = sessionFor(interaction);
 
     if (!session) {
-        await safeReply(interaction, STALE_MESSAGE);
+        await deadSessionAck(interaction);
         return;
     }
 

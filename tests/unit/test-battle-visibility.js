@@ -7,7 +7,9 @@ const {
 } = require("../../src/bot/battleFormat");
 const {
     sendPrivatePanels,
-    updatePrivatePanels
+    updatePrivatePanels,
+    updateBattlePanel,
+    refreshBattleViews
 } = require("../../src/bot/battlePanel");
 const { handleButton } = require("../../src/bot/buttons");
 const driver = require("../helpers/rollDriver");
@@ -165,10 +167,10 @@ async function run() {
         assert(u1ids.includes(rollId));
         assert(!u2ids.some(id => id?.startsWith("battle:roll:")));
 
-        const dice = buildBattleEmbed(session).data.fields.find(
-            f => f.name.includes("Dice")
-        );
-        assert(dice.value.includes("DM"));
+        const embed = buildBattleEmbed(session).data;
+        const current = embed.fields.find(f => f.name.includes("Current"));
+        assert(current.value.includes("d20 contest"));
+        assert(embed.footer.text.includes("My Controls"));
         console.log("PASS: initiative pending — roll in roller's DM only");
 
         // Both roll → initiative resolves → winner sees action controls.
@@ -413,24 +415,33 @@ async function run() {
         bs.attack(session, "u1");
         const rollId = `battle:roll:${session.pending.id}`;
 
-        // Wrong roller from DM → ephemeral rejection, state unchanged.
+        // Wrong roller from DM → private view healed in place, the
+        // action is NOT consumed, no extra ephemeral is spawned.
         const wrong = mockDmButton({
             customId: rollId, userId: "u2",
             channelId: "dm_u2", client
         });
         await handleButton(wrong);
-        assert(wrong.calls.replies[0].ephemeral);
+        assert.equal(wrong.calls.replies.length, 0);
+        assert.equal(wrong.calls.updates.length, 1);
+        assert(
+            !customIds(wrong.calls.updates[0]).some(
+                id => id?.startsWith("battle:roll:")
+            ) // u2 is not the roller — no roll button in their view
+        );
         assert(session.pending);
         assert.equal(session.pending.stage, "contest_attacker");
 
-        // Stale action id → rejected.
+        // Stale action id → rejected, message healed to current view.
         const stale = mockDmButton({
             customId: "battle:roll:act_old", userId: "u1",
             channelId: "dm_u1", client
         });
         await handleButton(stale);
+        assert.equal(stale.calls.replies.length, 0);
+        assert.equal(stale.calls.updates.length, 1);
         assert(
-            stale.calls.replies[0].content.includes("no longer needed")
+            customIds(stale.calls.updates[0]).includes(rollId)
         );
         console.log("PASS: wrong-roller + stale id rejected from DM too");
 
@@ -488,6 +499,182 @@ async function run() {
         assert.equal(panelMsg.edits.length, 1); // public panel refreshed
         console.log("PASS: ephemeral action click updates all surfaces");
 
+        cleanup(session);
+    }
+
+    // --- canonical public panel: deleted → one deliberate resend -------
+
+    {
+        const session = startSession();
+        session.panelMessageId = "panel_dead";
+
+        const sends = [];
+        const pubChannel = {
+            send: async p => {
+                sends.push(p);
+                return { id: `pub_${sends.length}` };
+            },
+            messages: {
+                // 10008 = Unknown Message — the panel was deleted.
+                fetch: async () => {
+                    throw Object.assign(
+                        new Error("Unknown Message"), { code: 10008 }
+                    );
+                }
+            }
+        };
+        const client = {
+            users: { fetch: async () => { throw new Error("x"); } },
+            channels: { fetch: async () => pubChannel }
+        };
+        const btn = mockDmButton({
+            customId: "battle:attack", userId: "u1",
+            channelId: "dm_u1", client
+        });
+        // DM-origin refresh → public panel is fetched, found deleted
+        // (10008) → exactly one deliberate replacement is sent.
+        await refreshBattleViews(btn, session);
+
+        assert.equal(sends.length, 1); // exactly one replacement panel
+        assert.equal(session.panelMessageId, "pub_1");
+        console.log("PASS: deleted canonical panel recovered once");
+        cleanup(session);
+    }
+
+    // --- transient fetch error keeps the canonical reference ----------
+
+    {
+        const session = startSession();
+        session.panelMessageId = "panel_ok";
+
+        const sends = [];
+        const channel = {
+            send: async () => { sends.push(1); return { id: "x" }; },
+            messages: {
+                // Transient gateway error — message still exists.
+                fetch: async () => {
+                    throw Object.assign(
+                        new Error("Service Unavailable"), { code: 0 }
+                    );
+                }
+            }
+        };
+
+        const r = await updateBattlePanel(channel, session);
+        assert.equal(r, null);
+        assert.equal(session.panelMessageId, "panel_ok"); // kept!
+        assert.equal(sends.length, 0); // no duplicate send
+        console.log("PASS: transient panel error keeps reference");
+        cleanup(session);
+    }
+
+    // --- transient DM edit failure: no duplicate send, dmFailed set ---
+
+    {
+        const session = startSession();
+        const users = new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]);
+        const client = mockClient(users);
+        await sendPrivatePanels(client, session);
+
+        const panel = session.privatePanels.get("u1");
+        const realEdit = panel.message.edit;
+        panel.message.edit = async () => {
+            throw Object.assign(new Error("timeout"), { code: 0 });
+        };
+
+        await updatePrivatePanels(client, session);
+        assert.equal(users.get("u1").sent.length, 1); // no resend
+        assert(session.dmFailed.has("u1"));
+
+        panel.message.edit = realEdit;
+        await updatePrivatePanels(client, session);
+        assert(!session.dmFailed.has("u1")); // healed on next edit
+        assert.equal(users.get("u1").sent.length, 1);
+        console.log("PASS: transient DM edit failure — no duplicate");
+        cleanup(session);
+    }
+
+    // --- stale private click heals the message instead of piling on ---
+
+    {
+        const session = startSession();
+        const client = mockClient(new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]));
+        await sendPrivatePanels(client, session);
+
+        bs.attack(session, "u1"); // pending exists
+        const stale = mockDmButton({
+            customId: "battle:roll:act_obsolete", userId: "u1",
+            channelId: "dm_u1", client
+        });
+        stale.message = { id: "dm_panel_u1" };
+        await handleButton(stale);
+
+        // In-place heal: the stale DM becomes the CURRENT private view
+        // — a fresh ephemeral rejection is NOT spawned.
+        assert.equal(stale.calls.replies.length, 0);
+        assert.equal(stale.calls.updates.length, 1);
+        const ids = customIds(stale.calls.updates[0]);
+        assert(
+            ids.includes(`battle:roll:${session.pending.id}`)
+        );
+        assert.equal(session.pending.stage, "contest_attacker");
+        console.log("PASS: stale private click heals to current view");
+        cleanup(session);
+    }
+
+    // --- dead session: stale panel controls stripped on click ---------
+
+    {
+        const session = startSession();
+        bs.forfeit(session, "u1"); // session removed from the map
+        assert.equal(bs.getSession(session.channelId), null);
+
+        const dead = mockDmButton({
+            customId: "battle:attack", userId: "u1",
+            channelId: "dm_u1",
+            client: mockClient(new Map())
+        });
+        dead.message = { id: "old_dm" };
+        await handleButton(dead);
+
+        assert.equal(dead.calls.updates.length, 1);
+        assert.equal(dead.calls.updates[0].components.length, 0);
+        assert(
+            dead.calls.updates[0].content.includes("ended")
+        );
+        console.log("PASS: dead-session click strips stale controls");
+    }
+
+    // --- repeated My Controls: ephemeral each time, DM not duplicated -
+
+    {
+        const session = startSession();
+        const users = new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]);
+        const client = mockClient(users);
+        await sendPrivatePanels(client, session);
+        session.panelMessageId = "panel_1";
+
+        for (let i = 0; i < 3; i++) {
+            const btn = mockDmButton({
+                customId: "battle:mypanel", userId: "u1",
+                channelId: session.channelId, client
+            });
+            btn.message = { id: "panel_1" };
+            await handleButton(btn);
+            assert(btn.calls.replies[0].ephemeral);
+        }
+        // DM panel was edited in place, never resent.
+        assert.equal(users.get("u1").sent.length, 1);
+        console.log("PASS: repeated My Controls — no DM duplicates");
         cleanup(session);
     }
 

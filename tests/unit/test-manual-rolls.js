@@ -580,7 +580,7 @@ async function run() {
         await handleButton(right);
         assert.equal(session.pending.attackerRolls.length, 1);
         const embed = right.calls.updates[0].embeds[0].data;
-        const diceField = embed.fields.find(f => f.name === "🎲 Dice");
+        const diceField = embed.fields.find(f => f.name === "⚡ Current");
         assert(diceField.value.includes("u2"));
         console.log(
             "PASS: roll button end-to-end — wrong player rejected, " +
