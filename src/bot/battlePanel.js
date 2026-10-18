@@ -195,7 +195,13 @@ async function refreshBattleViews(interaction, session, report = null) {
             // Canonical panel was deleted mid-battle — deliberately
             // replace it once rather than leaving the channel blind.
             if (!updated && !session.panelMessageId) {
-                await sendBattlePanel(channel, session, report);
+                const fresh = await sendBattlePanel(
+                    channel, session, report
+                );
+                console.log(
+                    `[battle] public panel recovered — ` +
+                    `new message ${fresh.id}`
+                );
             }
         }
     }

@@ -65,18 +65,21 @@ async function deadSessionAck(interaction) {
 }
 
 // Rejection on a private surface (DM panel or ephemeral view) — heal
-// the stale message into the clicker's CURRENT private view instead
-// of stacking a new ephemeral on top of it. Public-surface and
-// non-participant rejections keep the plain ephemeral notice.
+// the stale message into the clicker's CURRENT private view with the
+// rejection reason on top, instead of stacking a new ephemeral on it.
+// Public-surface and non-participant rejections keep the plain
+// ephemeral notice.
 async function rejectOrHeal(interaction, session, message) {
     const participant = session.players.some(
         p => p.discordId === interaction.user.id
     );
 
     if (participant && !isPanelMessage(interaction, session)) {
-        const healed = await interaction.update(
-            buildPrivateView(session, interaction.user.id)
-        ).catch(() => null);
+        const view = buildPrivateView(session, interaction.user.id);
+        const healed = await interaction.update({
+            ...view,
+            content: `${message}\n\n${view.content}`
+        }).catch(() => null);
 
         if (healed !== null) {
             await refreshBattleViews(interaction, session);
@@ -470,6 +473,22 @@ async function handleMyPanel(interaction) {
         return;
     }
 
+    // An ephemeral belongs to the interaction that created it — the
+    // stored panel's own token deletes it (≤15 min), so each click
+    // replaces the old panel instead of stacking another on top.
+    // Editing is deliberately not used: an edit to a dismissed panel
+    // succeeds invisibly, leaving the player with no visible view.
+    const stored = session.ephemeralPanels?.get(interaction.user.id);
+    if (stored) {
+        const removed = await stored.deleteReply().catch(() => null);
+        session.ephemeralPanels.delete(interaction.user.id);
+        console.log(
+            `[battle] My Controls panel ` +
+            `${removed === null ? "expired —" : "deleted —"} ` +
+            `replacing for ${interaction.user.id}`
+        );
+    }
+
     // Opportunistic heal: surface the DM panel too — a lost or
     // deleted one is resent, an existing one is edited in place.
     await updatePrivatePanels(interaction.client, session);
@@ -478,6 +497,7 @@ async function handleMyPanel(interaction) {
         ...buildPrivateView(session, interaction.user.id),
         ephemeral: true
     });
+    session.ephemeralPanels.set(interaction.user.id, interaction);
 }
 
 // Opens an ephemeral skill picker for the current turn owner.

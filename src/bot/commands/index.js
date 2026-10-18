@@ -12,6 +12,7 @@ const battleAttack = require("./battle-attack");
 const battleForfeit = require("./battle-forfeit");
 const characterImage = require("./character-image");
 const rpg = require("./rpg");
+const clear = require("./clear");
 
 const commands = new Collection();
 
@@ -28,7 +29,8 @@ for (const command of [
     battleAttack,
     battleForfeit,
     characterImage,
-    rpg
+    rpg,
+    clear
 ]) {
     commands.set(command.data.name, command);
 }

@@ -100,7 +100,7 @@ function mockClient(users) {
 }
 
 function mockDmButton({ customId, userId, channelId, client }) {
-    const calls = { replies: [], updates: [] };
+    const calls = { replies: [], updates: [], deletes: 0 };
     return {
         calls,
         customId,
@@ -109,7 +109,9 @@ function mockDmButton({ customId, userId, channelId, client }) {
         user: { id: userId },
         channel: { send: async () => ({ id: "m" }) },
         reply: async p => calls.replies.push(p),
-        update: async p => calls.updates.push(p)
+        update: async p => calls.updates.push(p),
+        // The ephemeral this interaction owns — deleteReply removes it.
+        deleteReply: async () => { calls.deletes++; return {}; }
     };
 }
 
@@ -424,6 +426,9 @@ async function run() {
         await handleButton(wrong);
         assert.equal(wrong.calls.replies.length, 0);
         assert.equal(wrong.calls.updates.length, 1);
+        // The healed message carries the rejection text AND the
+        // clicker's current view — without any roll button for u2.
+        assert(wrong.calls.updates[0].content.includes("not yours"));
         assert(
             !customIds(wrong.calls.updates[0]).some(
                 id => id?.startsWith("battle:roll:")
@@ -663,6 +668,7 @@ async function run() {
         await sendPrivatePanels(client, session);
         session.panelMessageId = "panel_1";
 
+        let previous = null;
         for (let i = 0; i < 3; i++) {
             const btn = mockDmButton({
                 customId: "battle:mypanel", userId: "u1",
@@ -671,10 +677,16 @@ async function run() {
             btn.message = { id: "panel_1" };
             await handleButton(btn);
             assert(btn.calls.replies[0].ephemeral);
+            if (previous) {
+                // Each new panel deletes the one before it — the user
+                // never sees more than one My Controls panel.
+                assert.equal(previous.calls.deletes, 1);
+            }
+            previous = btn;
         }
         // DM panel was edited in place, never resent.
         assert.equal(users.get("u1").sent.length, 1);
-        console.log("PASS: repeated My Controls — no DM duplicates");
+        console.log("PASS: repeated My Controls — replaces, no dupes");
         cleanup(session);
     }
 

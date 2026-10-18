@@ -205,7 +205,11 @@ function startBattle(channelId, playerOne, playerTwo, options = {}) {
         // dmFailed holds ids whose DMs can't be delivered — the public
         // panel falls back to shared controls while it's non-empty.
         privatePanels: new Map(),
-        dmFailed: new Set()
+        dmFailed: new Set(),
+        // discordId → the My Controls interaction whose ephemeral
+        // reply is that player's current panel; its token deletes the
+        // panel on the next click so panels replace, never stack.
+        ephemeralPanels: new Map()
     };
 
     battlesByChannel.set(channelId, session);
