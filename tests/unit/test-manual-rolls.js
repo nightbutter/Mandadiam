@@ -336,18 +336,18 @@ async function run() {
         exp = bs.expectedRoll(session);
         assert.equal(exp.hitIndex, 1);
         // Live HP untouched during pending — the projection tracks
-        // the first hit (doubled): (5+20)*2-5 = 45.
+        // the first hit (ordinary formula): 5+20-5 = 20.
         assert.equal(session.battle.characters[1].hp, 200);
-        assert.equal(session.pending.projectedDefenderHp, 155);
+        assert.equal(session.pending.projectedDefenderHp, 180);
         const h2 = bs.recordRoll(session, "u1", 4);
         assert(h2.resolved);
         assert.equal(h2.result.outcome, "double_attack");
         assert.equal(h2.result.hits.length, 2);
-        assert.equal(h2.result.hits[0].damage, 45); // (5+20)*2-5
-        assert.equal(h2.result.hits[1].damage, 19); // 4+20-5
+        assert.equal(h2.result.hits[0].damage, 20); // 5+20-5
+        assert.equal(h2.result.hits[1].damage, 7); // round((4+20)/2)-5
         console.log(
             "PASS: double attack — two separate d8 clicks, " +
-            "first hit doubled"
+            "second hit halved"
         );
         cleanup(session);
     }

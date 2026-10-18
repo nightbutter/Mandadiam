@@ -115,7 +115,7 @@ function previewHit(pending, roll) {
         defender,
         roll,
         pending.type === "skill" ? "skill" : "normal",
-        pending.doubleAttack && index === 0
+        pending.doubleAttack && index > 0
     );
 }
 

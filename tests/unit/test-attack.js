@@ -43,7 +43,7 @@ test("โจมตีปกติเมื่อชนะ d20", () => {
     assert.equal(enemy.hp, 82);
 });
 
-// 2. ผู้โจมตีได้ 20: ครั้งแรกคูณ 2 ครั้งสองไม่คูณ
+// 2. ผู้โจมตีได้ 20: ครั้งแรกสูตรปกติ ครั้งสองหารสอง
 test("ได้ 20 แล้วโจมตีสองครั้ง", () => {
     const { player, enemy } = createCharacters();
 
@@ -53,14 +53,14 @@ test("ได้ 20 แล้วโจมตีสองครั้ง", () => {
         damageRolls: [5, 4]
     });
 
-    // ครั้งแรก: (5 + 20) * 2 - 7 = 43
-    // ครั้งสอง: 4 + 20 - 7 = 17
+    // ครั้งแรก: 5 + 20 - 7 = 18
+    // ครั้งสอง: Math.round((4 + 20) / 2) - 7 = 12 - 7 = 5
     assert.equal(result.outcome, "double_attack");
     assert.equal(result.hits.length, 2);
-    assert.equal(result.hits[0].damage, 43);
-    assert.equal(result.hits[1].damage, 17);
-    assert.equal(result.damage, 60);
-    assert.equal(enemy.hp, 40);
+    assert.equal(result.hits[0].damage, 18);
+    assert.equal(result.hits[1].damage, 5);
+    assert.equal(result.damage, 23);
+    assert.equal(enemy.hp, 77);
 });
 
 // 3. ผู้ป้องกันได้ 20 และชนะ: สะท้อน d8 + DEF - DEF ผู้โจมตี
@@ -97,8 +97,8 @@ test("ผล d20 เสมอแล้วทอยใหม่", () => {
 });
 
 // 5. d8 ครั้งแรกของการโจมตีสองครั้งออก 8
-// ห้ามคูณ Critical เพิ่มในครั้งแรก
-test("การโจมตีสองครั้งไม่คูณ Critical ซ้ำ", () => {
+// ครั้งแรกเป็น Critical ตามปกติ ครั้งสองหารสองก่อนหัก DEF
+test("การโจมตีสองครั้ง — ครั้งแรก Critical ตามกติกา d8", () => {
     const { player, enemy } = createCharacters();
 
     const result = resolveAttack(player, enemy, {
@@ -107,12 +107,12 @@ test("การโจมตีสองครั้งไม่คูณ Critica
         damageRolls: [8, 3]
     });
 
-    // ครั้งแรก: (8 + 20) * 2 - 7 = 49
-    // ครั้งสอง: 3 + 20 - 7 = 16
+    // ครั้งแรก: (8 + 20) * 2 - 7 = 49 (Critical)
+    // ครั้งสอง: Math.round((3 + 20) / 2) - 7 = 12 - 7 = 5
     assert.equal(result.hits[0].damage, 49);
-    assert.equal(result.hits[0].critical, false);
-    assert.equal(result.hits[1].damage, 16);
-    assert.equal(result.damage, 65);
+    assert.equal(result.hits[0].critical, true);
+    assert.equal(result.hits[1].damage, 5);
+    assert.equal(result.damage, 54);
 });
 
 console.log("\nการทดสอบทั้งหมดผ่าน");

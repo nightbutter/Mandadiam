@@ -124,26 +124,25 @@ function determineTurnOrder(first, second, options = {}) {
 }
 
 // สร้างดาเมจหนึ่งครั้ง
-function calculateHitDamage(attacker, defender, roll, type, doubled) {
+// halved: ครั้งที่สองของการโจมตีสองครั้ง (d20 = 20) — หาร
+// องค์ประกอบการโจมตีด้วย 2 (Math.round) ก่อนหัก DEF
+function calculateHitDamage(attacker, defender, roll, type, halved) {
     const atk = attacker.atk ?? 0;
     const spe = type === "skill" ? (attacker.spe ?? 0) : 0;
     const def = defender.def ?? 0;
-    const rawDamage = roll + atk + spe;
+    const critical = roll === 8;
+    const attackComponent = critical
+        ? (roll + atk + spe) * 2
+        : roll + atk + spe;
+    const attackValue = halved
+        ? Math.round(attackComponent / 2)
+        : attackComponent;
 
-    // การโจมตีพิเศษจาก d20 = 20:
-    // ครั้งแรกคูณ 2 และไม่คูณ Critical ซ้ำ
-    if (doubled) {
-        return {
-            roll,
-            critical: false,
-            damage: Math.max(0, rawDamage * 2 - def)
-        };
-    }
-
-    return calculateDamage(attacker, defender, {
-        type,
-        roll
-    });
+    return {
+        roll,
+        critical,
+        damage: Math.max(0, attackValue - def)
+    };
 }
 
 // ตัดสินผลการโจมตี รวมโจมตีสองครั้งและสะท้อนดาเมจ
@@ -191,6 +190,7 @@ function resolveAttack(attacker, defender, options = {}) {
     }
 
     // ผู้โจมตีชนะ: ถ้า d20 = 20 จะโจมตีสองครั้ง
+    // ครั้งแรกใช้สูตรปกติ (Critical ตาม d8) ครั้งที่สองหารสอง
     const doubleAttack = contest.attackerRoll === 20;
     const hitCount = doubleAttack ? 2 : 1;
     const hits = [];
@@ -204,7 +204,7 @@ function resolveAttack(attacker, defender, options = {}) {
             defender,
             roll,
             options.type || "normal",
-            doubleAttack && i === 0
+            doubleAttack && i > 0
         );
 
         defender.hp = Math.max(0, defender.hp - hit.damage);
