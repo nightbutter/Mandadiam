@@ -106,6 +106,79 @@ INSERT INTO character_ex (character_id, ex_key)
            ])[(c.id % 4 + 1)::int]
     FROM characters c
     ON CONFLICT (character_id) DO NOTHING;
+
+-- Phase 7: status effects. Definitions are the catalog admins edit;
+-- rules are per-character application configs. Both are persisted;
+-- ACTIVE status instances stay in-memory like cost/ex/cooldowns.
+CREATE TABLE IF NOT EXISTS status_definitions (
+    id               BIGSERIAL PRIMARY KEY,
+    key              TEXT NOT NULL UNIQUE,
+    name             TEXT NOT NULL,
+    behavior         TEXT NOT NULL CHECK (behavior IN (
+                         'periodic_damage', 'skip_turn',
+                         'modify_atk', 'modify_def')),
+    enabled          BOOLEAN NOT NULL DEFAULT true,
+    power            INT NOT NULL DEFAULT 0,
+    is_percent       BOOLEAN NOT NULL DEFAULT false,
+    max_stacks       INT NOT NULL DEFAULT 1 CHECK (max_stacks > 0),
+    default_duration INT NOT NULL DEFAULT 1 CHECK (default_duration > 0),
+    reapply_policy   TEXT NOT NULL DEFAULT 'refresh_duration'
+                     CHECK (reapply_policy IN (
+                         'refresh_duration', 'stack_intensity',
+                         'replace_if_stronger', 'ignore_if_active',
+                         'replace_duration')),
+    description      TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS status_rules (
+    id           BIGSERIAL PRIMARY KEY,
+    character_id BIGINT NOT NULL REFERENCES characters (id)
+                 ON DELETE CASCADE,
+    status_id    BIGINT NOT NULL REFERENCES status_definitions (id)
+                 ON DELETE CASCADE,
+    -- character = fallback for all actions; attack = normal attacks;
+    -- skill/ex = one specific action key from the catalogs.
+    scope        TEXT NOT NULL CHECK (scope IN
+                     ('character', 'attack', 'skill', 'ex')),
+    action_key   TEXT NOT NULL DEFAULT '',
+    enabled      BOOLEAN NOT NULL DEFAULT true,
+    chance       INT NOT NULL DEFAULT 100
+                 CHECK (chance BETWEEN 0 AND 100),
+    -- NULL duration falls back to the definition's default_duration.
+    duration     INT CHECK (duration IS NULL OR duration > 0),
+    stacks       INT NOT NULL DEFAULT 1 CHECK (stacks > 0),
+    timing       TEXT NOT NULL DEFAULT 'per_action'
+                 CHECK (timing IN ('per_action', 'per_hit')),
+    conditions   JSONB NOT NULL DEFAULT '{}',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (character_id, status_id, scope, action_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_status_rules_character
+    ON status_rules (character_id);
+
+-- Seed the default catalog. Enabled definitions are inert without
+-- rules; nothing applies until an admin configures a rule.
+INSERT INTO status_definitions
+    (key, name, behavior, power, max_stacks, default_duration,
+     reapply_policy, description)
+VALUES
+    ('burn', 'Burn', 'periodic_damage', 4, 1, 3, 'refresh_duration',
+     'Takes damage at the start of each of its turns.'),
+    ('poison', 'Poison', 'periodic_damage', 3, 5, 3, 'stack_intensity',
+     'Stacking damage at the start of each of its turns.'),
+    ('bleed', 'Bleed', 'periodic_damage', 2, 1, 4, 'replace_duration',
+     'Lingering damage; reapplication replaces the duration.'),
+    ('stun', 'Stun', 'skip_turn', 0, 1, 1, 'ignore_if_active',
+     'Skips its next turn.'),
+    ('atk_down', 'ATK Down', 'modify_atk', -5, 3, 2, 'stack_intensity',
+     'Reduces effective ATK while active.'),
+    ('def_down', 'DEF Down', 'modify_def', -5, 3, 2, 'stack_intensity',
+     'Reduces effective DEF while active.')
+ON CONFLICT (key) DO NOTHING;
 `;
 
 async function migrate() {

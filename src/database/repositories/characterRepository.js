@@ -26,6 +26,17 @@ async function listByPlayer(playerId) {
     return rows;
 }
 
+// Admin character picker — all characters, newest first, paginated.
+async function listAll(limit = 25, offset = 0) {
+    const { rows } = await pool.query(
+        `SELECT ${COLUMNS}
+         FROM characters ORDER BY id LIMIT $1 OFFSET $2`,
+        [limit, offset]
+    );
+
+    return rows;
+}
+
 async function findById(characterId) {
     const { rows: [character] } = await pool.query(
         `SELECT ${COLUMNS}
@@ -61,6 +72,7 @@ async function updateImage(characterId, imageUrl) {
 module.exports = {
     createCharacter,
     listByPlayer,
+    listAll,
     findById,
     findByName,
     updateImage

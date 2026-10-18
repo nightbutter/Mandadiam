@@ -3,6 +3,9 @@ const { determineTurnOrder, resolveAttack } = require("./combat");
 const { resolveExAttack } = require("./exCombat");
 const { onTurnStart, spendCost } = require("./cost");
 const { consumeEx, EX_MAX } = require("./exGauge");
+const {
+    effView, applyActionStatuses, processTurnStart
+} = require("./statuses");
 
 function createBattle(first, second, options = {}) {
     if (!first || !second || first === second) {
@@ -26,6 +29,11 @@ function createBattle(first, second, options = {}) {
         // Per-skill cooldown counters (skillKey → remaining own
         // turns), transient like cost/ex — fresh every battle.
         character.cooldowns ??= {};
+        // Active status instances — transient like cost/ex.
+        character.statuses ??= [];
+        // Application rules loaded by the service layer (DB-backed);
+        // empty means this fighter can inflict no statuses.
+        character.statusRules ??= [];
     }
 
     // deferInitiative: the manual-roll system collects both players'
@@ -88,41 +96,90 @@ function startTurn(battle) {
         return { success: false, message: "เทิร์นปัจจุบันเริ่มไปแล้ว" };
     }
 
-    // ข้ามตัวละครที่พ่ายแพ้
-    let character = battle.orderedCharacters[battle.turnIndex];
+    const statusEvents = [];
 
-    if (!character || character.hp <= 0) {
-        const living = battle.orderedCharacters.filter(target => target.hp > 0);
+    // The loop advances past defeated fighters AND fighters whose
+    // turn is consumed by a skip_turn status. Durations decrement on
+    // every skipped turn, so the loop always terminates.
+    for (let guard = 0; guard < 100; guard++) {
+        // ข้ามตัวละครที่พ่ายแพ้
+        let character = battle.orderedCharacters[battle.turnIndex];
 
-        if (living.length <= 1) {
-            battle.status = "finished";
-            return {
-                success: false,
-                message: "การต่อสู้สิ้นสุดแล้ว",
-                winner: living[0]?.name ?? null
-            };
+        if (!character || character.hp <= 0) {
+            const living = battle.orderedCharacters.filter(
+                target => target.hp > 0
+            );
+
+            if (living.length <= 1) {
+                battle.status = "finished";
+                return {
+                    success: false,
+                    message: "การต่อสู้สิ้นสุดแล้ว",
+                    winner: living[0]?.name ?? null,
+                    statusEvents
+                };
+            }
+
+            battle.turnIndex = battle.orderedCharacters.findIndex(
+                target => target.hp > 0
+            );
+            character = battle.orderedCharacters[battle.turnIndex];
         }
 
-        battle.turnIndex = battle.orderedCharacters.findIndex(
-            target => target.hp > 0
-        );
-        character = battle.orderedCharacters[battle.turnIndex];
+        battle.turnNumber += 1;
+        const costResult = onTurnStart(character);
+
+        battle.currentTurn = {
+            character,
+            attackCostGranted: false,
+            actionTaken: false
+        };
+
+        // Status tick at the START of the owner's turn: periodic
+        // damage, then the skip check, then duration decrement.
+        const processed = processTurnStart(battle, character);
+        statusEvents.push(...processed.events);
+
+        if (processed.ko) {
+            // Status damage KO — same finalization path as combat.
+            const ended = updateBattleStatus(battle);
+            battle.currentTurn = null;
+
+            if (ended.finished) {
+                return {
+                    success: false,
+                    message: "การต่อสู้สิ้นสุดแล้ว",
+                    winner: ended.winner,
+                    statusEvents
+                };
+            }
+
+            continue;
+        }
+
+        if (processed.skipped) {
+            // A skipped turn is still a real turn: turnNumber counted
+            // it, COST ticked, and endTurn performs the departing-
+            // fighter cooldown tick before advancing.
+            endTurn(battle);
+            continue;
+        }
+
+        return {
+            success: true,
+            turnNumber: battle.turnNumber,
+            character: character.name,
+            cost: costResult,
+            statusEvents
+        };
     }
 
-    battle.turnNumber += 1;
-    const costResult = onTurnStart(character);
-
-    battle.currentTurn = {
-        character,
-        attackCostGranted: false,
-        actionTaken: false
-    };
-
+    // Defensive — durations always decrement, so this is unreachable
+    // unless a status is configured to never expire.
     return {
-        success: true,
-        turnNumber: battle.turnNumber,
-        character: character.name,
-        cost: costResult
+        success: false,
+        message: "turn processing did not terminate",
+        statusEvents
     };
 }
 
@@ -170,7 +227,9 @@ function performAction(battle, action, options = {}) {
         }
     }
 
-    const result = resolveAttack(attacker, defender, {
+    // Effective-stat views: ATK/DEF modifiers apply inside the damage
+    // math without mutating the characters' base stats.
+    const result = resolveAttack(effView(attacker), effView(defender), {
         ...options,
         type: action.type,
         turnState: turn
@@ -187,10 +246,19 @@ function performAction(battle, action, options = {}) {
 
     turn.actionTaken = true;
 
+    // Status rules fire on successful, executed hits only — reflected
+    // actions and defeated targets never gain statuses.
+    const statusEvents = applyActionStatuses(
+        attacker, defender,
+        { type: action.type, key: action.key ?? null },
+        result, options
+    );
+
     const battleStatus = updateBattleStatus(battle);
 
     return {
         ...result,
+        statusEvents,
         skillCost: skillCost?.spent ?? 0,
         attackerCost: attacker.cost,
         defenderCost: defender.cost,
@@ -250,10 +318,10 @@ function performExAction(battle, exDef, options = {}) {
     // activation never consumes resources.
     consumeEx(attacker);
 
-    const result = resolveExAttack(attacker, defender, exDef, {
-        ...options,
-        turnState: turn
-    });
+    const result = resolveExAttack(
+        effView(attacker), effView(defender), exDef,
+        { ...options, turnState: turn }
+    );
 
     if (!result.success) {
         attacker.cost = Math.min(6, attacker.cost + costSpend.spent);
@@ -263,10 +331,17 @@ function performExAction(battle, exDef, options = {}) {
 
     turn.actionTaken = true;
 
+    const statusEvents = applyActionStatuses(
+        attacker, defender,
+        { type: "ex", key: exDef.key },
+        result, options
+    );
+
     const battleStatus = updateBattleStatus(battle);
 
     return {
         ...result,
+        statusEvents,
         exCost: costSpend.spent,
         attackerCost: attacker.cost,
         defenderCost: defender.cost,

@@ -8,7 +8,7 @@ const {
     ButtonStyle,
     EmbedBuilder
 } = require("discord.js");
-const { env } = require("../config/env");
+const { env, isAdmin } = require("../config/env");
 const playerService = require("../services/playerService");
 const characterService = require("../services/characterService");
 const battleService = require("../game/services/battleService");
@@ -81,7 +81,9 @@ async function showMain(interaction) {
         ? await playerService.getProfile(interaction.user.id)
         : null;
 
-    await interaction.update(views.mainMenuView(profile));
+    await interaction.update(
+        views.mainMenuView(profile, isAdmin(interaction.user.id))
+    );
 }
 
 async function showProfile(interaction) {
@@ -173,7 +175,9 @@ async function handleRegister(interaction) {
     );
 
     const profile = await playerService.getProfile(interaction.user.id);
-    const view = views.mainMenuView(profile);
+    const view = views.mainMenuView(
+        profile, isAdmin(interaction.user.id)
+    );
 
     view.embeds[0].setDescription(
         "✅ Registered — welcome to Mandadiam!\n\n" +
@@ -288,6 +292,20 @@ const buttonHandlers = {
     "menu:help": interaction =>
         interaction.update(views.helpView()),
     "menu:register": handleRegister,
+    // Admin entry — the handler re-checks ADMIN_IDS membership even
+    // though the button only renders for admins.
+    "menu:admin": async interaction => {
+        if (!isAdmin(interaction.user.id)) {
+            await interaction.reply({
+                content: "You don't have access to admin tools.",
+                ephemeral: true
+            });
+            return;
+        }
+
+        const { homeView } = require("./admin");
+        await interaction.update(homeView());
+    },
     "menu:create": interaction =>
         interaction.showModal(views.createCharacterModal())
 };

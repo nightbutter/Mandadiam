@@ -207,6 +207,15 @@ Each character owns one persisted EX assignment in `character_ex`
   (default 4), your turn, a live target, and a valid assignment.
 - Formula: `max(0, floor((d8 + ATK + SPE) × mult) − effDef)` —
   same d20 contest/reflect/double rules as normal attacks.
+
+### Status Effects
+
+Reusable, admin-configured status system — DB-backed definitions
+(`status_definitions`) plus per-character action rules
+(`status_rules`), active instances held in memory like COST/EX.
+Admins configure it via the **Admin** panel in `/rpg`
+(`ADMIN_IDS` env). See `docs/STATUS_SYSTEM.md` for the full
+specification.
 - Initial catalog: **Oblivion Edge** (2.5× heavy), **Void Piercer**
   (2×, pierces 50% DEF), **Fang Barrage** (3×1 hits), **Last Light**
   (1.5×, 3× at ≤40% HP). Assignment is deterministic per character.

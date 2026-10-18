@@ -16,6 +16,7 @@ module.exports = {
         await interaction.deferReply({ ephemeral: true });
 
         const { getProfile } = require("../../services/playerService");
+        const { isAdmin } = require("../../config/env");
         const { mainMenuView } = require("../menu");
         const uiSessions = require("../uiSessions");
 
@@ -23,7 +24,7 @@ module.exports = {
 
         // editReply resolves to the dashboard message itself.
         const message = await interaction.editReply(
-            mainMenuView(profile)
+            mainMenuView(profile, isAdmin(interaction.user.id))
         );
 
         // Bind the dashboard message to its invoker — button ownership

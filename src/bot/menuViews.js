@@ -44,7 +44,10 @@ const backRow = new ActionRowBuilder().addComponents(
 
 // --- views -----------------------------------------------------------------
 
-function mainMenuView(profile) {
+// `admin` adds the Admin entry for ADMIN_IDS members only — the
+// button is cosmetic; every admin:* interaction re-checks
+// authorization server-side in admin.js.
+function mainMenuView(profile, admin = false) {
     const description = profile
         ? `Welcome back, **${profile.player.username}** — ` +
           `active character: **${profile.activeCharacter?.name ?? "none"}**`
@@ -74,7 +77,11 @@ function mainMenuView(profile) {
                 menuButton("menu:battle", "Battle", "⚔️",
                     ButtonStyle.Success),
                 menuButton("menu:help", "Help / Rules", "📖",
-                    ButtonStyle.Secondary)
+                    ButtonStyle.Secondary),
+                ...(admin
+                    ? [menuButton("menu:admin", "Admin", "🛠️",
+                        ButtonStyle.Danger)]
+                    : [])
             )
         ]
         : [

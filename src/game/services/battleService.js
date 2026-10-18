@@ -16,7 +16,7 @@ const CHALLENGE_TTL_MS = 60_000;
 // Maps a characters-table row to the shape the combat engine expects:
 // base stats only — hp starts full, cost starts empty. Transient
 // battle state is never persisted back to the row.
-function toBattleCharacter(character, skills = [], exKey = null) {
+function toBattleCharacter(character, skills = [], exKey = null, statusRules = []) {
     return {
         name: character.name,
         hp: character.max_hp,
@@ -31,7 +31,11 @@ function toBattleCharacter(character, skills = [], exKey = null) {
         ex: 0,
         exKey,
         // Per-skill cooldowns — in-memory, scoped to this battle.
-        cooldowns: {}
+        cooldowns: {},
+        // Status config snapshot: resolved rules loaded at battle
+        // start (edits during a battle don't reach live fighters).
+        statusRules,
+        statuses: []
     };
 }
 
@@ -484,7 +488,8 @@ function resolvePending(session) {
             resolved: true,
             type: "initiative",
             initiative,
-            firstTurn
+            firstTurn,
+            turnEvents: firstTurn.statusEvents ?? []
         };
     }
 
@@ -495,7 +500,12 @@ function resolvePending(session) {
         : performAction(
             battle,
             pending.type === "skill"
-                ? { type: "skill", cost: pending.skill.cost }
+                ? {
+                    type: "skill",
+                    cost: pending.skill.cost,
+                    // status rules resolve by action key
+                    key: pending.skill.key
+                }
                 : { type: "normal" },
             manualRolls.rollOptions(pending)
         );
@@ -547,11 +557,20 @@ function resolvePending(session) {
             resolved: true,
             result,
             finished: true,
-            winner: battle.winner ?? null
+            winner: battle.winner ?? null,
+            // Status ticks at the next turn start can KO — the same
+            // finalization path as combat damage.
+            turnEvents: next.statusEvents ?? []
         };
     }
 
-    return { resolved: true, result, finished: false, next };
+    return {
+        resolved: true,
+        result,
+        finished: false,
+        next,
+        turnEvents: next.statusEvents ?? []
+    };
 }
 
 function forfeit(session, discordId) {

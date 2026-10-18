@@ -2,6 +2,8 @@ const playerRepository = require("../database/repositories/playerRepository");
 const characterRepository = require("../database/repositories/characterRepository");
 const skillRepository = require("../database/repositories/skillRepository");
 const exRepository = require("../database/repositories/exRepository");
+const statusRepository =
+    require("../database/repositories/statusRepository");
 const { toBattleCharacter } = require("../game/services/battleService");
 
 // Character management for Discord commands. The invoking user's own
@@ -321,9 +323,15 @@ async function getActiveBattleCharacter(discordId) {
         exKey = await exRepository.provision(character.id);
     }
 
+    // Status application rules snapshot — admin edits mid-battle
+    // don't reach live fighters (consistent with skills/EX).
+    const statusRules = await statusRepository.listRulesForCharacter(
+        character.id
+    );
+
     return {
         ok: true,
-        character: toBattleCharacter(character, skills, exKey)
+        character: toBattleCharacter(character, skills, exKey, statusRules)
     };
 }
 

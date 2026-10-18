@@ -212,6 +212,42 @@ async function announceResolved(interaction, session, outcome) {
         (result.outcome === "double_attack" ? " (double)" : "")
     );
 
+    // Status application events — only state changes are logged;
+    // missed/ignored/disabled rules stay silent to avoid spam.
+    const statusText = {
+        applied: "applied",
+        refreshed: "refreshed",
+        stacked: "grows",
+        replaced: "replaced"
+    };
+
+    for (const ev of result.statusEvents ?? []) {
+        if (statusText[ev.type]) {
+            pushLog(
+                session,
+                `✦ **${ev.name}** ${statusText[ev.type]} ` +
+                `on **${result.defender}**`
+            );
+        }
+    }
+
+    for (const ev of outcome.turnEvents ?? []) {
+        if (ev.type === "tick") {
+            pushLog(
+                session,
+                `✦ ${ev.name}: ${ev.damage} damage to ` +
+                `**${ev.target}**`
+            );
+        } else if (ev.type === "skipped") {
+            pushLog(
+                session,
+                `💤 **${ev.target}** is ${ev.name} — turn skipped!`
+            );
+        } else if (ev.type === "expired") {
+            pushLog(session, `✦ ${ev.name} on **${ev.target}** expires`);
+        }
+    }
+
     if (outcome.finished) {
         const winner = battleCharacterByName(session, outcome.winner);
         pushLog(
@@ -623,6 +659,12 @@ const handlers = {
 };
 
 async function handleButton(interaction) {
+    if (interaction.customId.startsWith("admin:")) {
+        const { handleAdminButton } = require("./admin");
+        await handleAdminButton(interaction);
+        return;
+    }
+
     if (interaction.customId.startsWith("menu:")) {
         const { handleMenuButton } = require("./menu");
         await handleMenuButton(interaction);

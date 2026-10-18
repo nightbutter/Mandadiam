@@ -25,11 +25,25 @@ const env = {
     databaseUrlUnpooled: optionalEnv("DATABASE_URL_UNPOOLED"),
     discordToken: optionalEnv("DISCORD_TOKEN"),
     discordClientId: optionalEnv("DISCORD_CLIENT_ID"),
-    discordGuildId: optionalEnv("DISCORD_GUILD_ID")
+    discordGuildId: optionalEnv("DISCORD_GUILD_ID"),
+    // Comma-separated Discord user ids allowed into the admin
+    // dashboard. Empty/absent = no admins; every admin interaction
+    // re-checks membership server-side.
+    adminIds: new Set(
+        (optionalEnv("ADMIN_IDS") ?? "")
+            .split(",")
+            .map(id => id.trim())
+            .filter(Boolean)
+    )
 };
+
+function isAdmin(discordId) {
+    return env.adminIds.has(String(discordId));
+}
 
 module.exports = {
     env,
+    isAdmin,
     requireEnv,
     optionalEnv
 };

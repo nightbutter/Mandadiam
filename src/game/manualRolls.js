@@ -1,5 +1,6 @@
 const { rollDice, calculateHitDamage } = require("./combat");
 const { previewExHit } = require("./exCombat");
+const { effView } = require("./statuses");
 
 // Manual dice-roll state machine. A pending action records every die
 // the players roll via Discord buttons; NOTHING mutates HP/COST/EX/
@@ -50,6 +51,9 @@ function createPending({
         // Preview of accumulated damage for early-stop decisions —
         // a projection only; live hp is untouched until resolution.
         projectedDefenderHp: defender.hp,
+        // Test-only deterministic status-chance rolls; the Discord
+        // path never sets this (server-side Math.random is used).
+        statusRolls: [],
         status: "pending"
     };
 }
@@ -97,16 +101,18 @@ function expectedRoll(pending) {
 // exactly like the engine's own "stop applying hits at 0 HP" rule).
 function previewHit(pending, roll) {
     const index = pending.damageRolls.length - 1; // just-pushed hit
+    // Effective-stat views so ATK/DEF status modifiers match the
+    // real resolution's math.
+    const attacker = effView(pending.attacker);
+    const defender = effView(pending.defender);
 
     if (pending.type === "ex") {
-        return previewExHit(
-            pending.attacker, pending.defender, pending.exDef, roll
-        );
+        return previewExHit(attacker, defender, pending.exDef, roll);
     }
 
     return calculateHitDamage(
-        pending.attacker,
-        pending.defender,
+        attacker,
+        defender,
         roll,
         pending.type === "skill" ? "skill" : "normal",
         pending.doubleAttack && index === 0
@@ -219,7 +225,10 @@ function rollOptions(pending) {
         attackerRolls: pending.attackerRolls,
         defenderRolls: pending.defenderRolls,
         damageRolls: pending.damageRolls,
-        reflectRolls: pending.reflectRolls
+        reflectRolls: pending.reflectRolls,
+        // Status-chance RNG is a separate injected queue — never a
+        // player click and never a combat die.
+        statusRolls: pending.statusRolls
     };
 }
 

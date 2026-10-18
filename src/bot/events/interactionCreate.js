@@ -55,7 +55,10 @@ module.exports = {
 
         if (interaction.isAnySelectMenu()) {
             try {
-                if (interaction.customId.startsWith("battle:")) {
+                if (interaction.customId.startsWith("admin:")) {
+                    const { handleAdminSelect } = require("../admin");
+                    await handleAdminSelect(interaction);
+                } else if (interaction.customId.startsWith("battle:")) {
                     const { handleBattleSelect } = require("../buttons");
                     await handleBattleSelect(interaction);
                 } else {
@@ -73,8 +76,13 @@ module.exports = {
 
         if (interaction.isModalSubmit()) {
             try {
-                const { handleModalSubmit } = require("../menu");
-                await handleModalSubmit(interaction);
+                if (interaction.customId.startsWith("adminmodal:")) {
+                    const { handleAdminModal } = require("../admin");
+                    await handleAdminModal(interaction);
+                } else {
+                    const { handleModalSubmit } = require("../menu");
+                    await handleModalSubmit(interaction);
+                }
             } catch (err) {
                 await reportError(
                     interaction,

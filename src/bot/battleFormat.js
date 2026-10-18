@@ -40,7 +40,24 @@ function costPips(cost) {
     return "●".repeat(cost) + "○".repeat(Math.max(0, 6 - cost));
 }
 
+// Compact status summary for one fighter: "Burn ×1 (2t)".
+function statusLine(character) {
+    if (!character.statuses?.length) {
+        return null;
+    }
+
+    return character.statuses
+        .map(s =>
+            `${s.name}` +
+            (s.maxStacks > 1 ? ` ×${s.stacks}` : "") +
+            ` (${s.remainingTurns}t)`
+        )
+        .join(", ");
+}
+
 function characterField(session, character) {
+    const statuses = statusLine(character);
+
     return {
         name:
             `${character.name} — ` +
@@ -50,7 +67,8 @@ function characterField(session, character) {
             `**${character.hp}/${character.maxHp}**\n` +
             `COST ${costPips(character.cost)} ${character.cost}/6\n` +
             `ATK ${character.atk} · DEF ${character.def} · ` +
-            `SPE ${character.spe}`,
+            `SPE ${character.spe}` +
+            (statuses ? `\n*${statuses}*` : ""),
         inline: true
     };
 }
