@@ -227,15 +227,19 @@ function defNewModal() {
                 placeholder: "burn"
             }),
             input("name", "Display name", { placeholder: "Burn" }),
-            input("behavior",
-                "behavior (periodic_damage/skip_turn/modify_atk/modify_def)",
-                { placeholder: "periodic_damage" }),
+            input("behavior", "behavior", {
+                placeholder:
+                    "periodic_damage | skip_turn | modify_atk | modify_def"
+            }),
             input("power", "power (int; skip_turn = 0)", {
                 placeholder: "4"
             }),
-            input("policy",
-                "reapply policy (refresh_duration/stack_intensity/…)",
-                { placeholder: "refresh_duration" })
+            input("policy", "reapply policy", {
+                placeholder:
+                    "refresh_duration | stack_intensity | " +
+                    "replace_if_stronger | ignore_if_active | " +
+                    "replace_duration"
+            })
         );
 }
 
@@ -484,8 +488,10 @@ function ruleModal(cid, statusId, scopeEnc, rule, def) {
             input("timing", "timing (per_action / per_hit)",
                 { value: rule?.timing ?? "per_action" }),
             input("conditions",
-                'conditions JSON e.g. {"target_hp_at_or_below_pct":50}',
+                "conditions JSON (blank = none)",
                 {
+                    placeholder:
+                        '{"target_hp_at_or_below_pct":50}',
                     value: rule && Object.keys(rule.conditions ?? {}).length
                         ? JSON.stringify(rule.conditions) : "",
                     required: false
