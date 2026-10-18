@@ -21,7 +21,8 @@ const {
     sendPrivatePanels,
     updatePrivatePanels,
     refreshBattleViews,
-    resolvePublicChannel
+    resolvePublicChannel,
+    isPanelMessage
 } = require("./battlePanel");
 
 // Dispatches MessageComponent button interactions. Every handler
@@ -43,11 +44,12 @@ function sessionFor(interaction) {
         null;
 }
 
-// Acknowledge the click on whichever surface it came from — public
-// panel gets the shared embed + shared row, a DM gets that player's
-// private view — then push the new state to every other surface.
+// Acknowledge the click on whichever surface it came from — the
+// public panel message gets the shared embed + shared row, a DM panel
+// or an ephemeral "My Controls" reply gets that player's private
+// view — then push the new state to every other surface.
 async function ackAndRefresh(interaction, session, report = null) {
-    if (interaction.channelId === session.channelId) {
+    if (isPanelMessage(interaction, session)) {
         await interaction.update({
             embeds: [buildBattleEmbed(session, report)],
             components: session.battle.status === "finished"
@@ -406,6 +408,28 @@ async function handleBattleRefresh(interaction) {
     );
 }
 
+// "My Controls" — replies ephemerally with the clicker's private
+// view. Works even when the DM panel never surfaced (Message
+// Requests, blocked DMs) since it needs no DM delivery at all.
+async function handleMyPanel(interaction) {
+    const session = sessionFor(interaction);
+
+    if (
+        !session ||
+        !session.players.some(
+            p => p.discordId === interaction.user.id
+        )
+    ) {
+        await safeReply(interaction, "You're not in this battle.");
+        return;
+    }
+
+    await interaction.reply({
+        ...buildPrivateView(session, interaction.user.id),
+        ephemeral: true
+    });
+}
+
 // Opens an ephemeral skill picker for the current turn owner.
 async function handleBattleSkills(interaction) {
     const session = sessionFor(interaction);
@@ -696,6 +720,7 @@ const handlers = {
     "battle:ultimate": handleBattleUltimate,
     "battle:ultimate:confirm": handleUltimateConfirm,
     "battle:ultimate:cancel": handleUltimateCancel,
+    "battle:mypanel": handleMyPanel,
     "battle:refresh": handleBattleRefresh,
     "battle:forfeit": handleBattleForfeit,
     "battle:forfeit:confirm": handleForfeitConfirm,

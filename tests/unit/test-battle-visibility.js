@@ -290,6 +290,7 @@ async function run() {
         let ids = customIds({ components: [buildBattleRow(session)] });
 
         assert(!ids.includes("battle:attack"));
+        assert(ids.includes("battle:mypanel"));
         assert(ids.includes("battle:refresh"));
         assert(ids.includes("battle:forfeit"));
 
@@ -432,6 +433,60 @@ async function run() {
             stale.calls.replies[0].content.includes("no longer needed")
         );
         console.log("PASS: wrong-roller + stale id rejected from DM too");
+
+        cleanup(session);
+    }
+
+    // --- "My Controls": ephemeral private view, no DM needed -----------
+
+    {
+        const session = startSession(); // u1 to act
+        session.panelMessageId = "panel_1";
+        const client = mockClient(new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]));
+
+        // Participant gets their private view ephemerally.
+        const mine = mockDmButton({
+            customId: "battle:mypanel", userId: "u1",
+            channelId: session.channelId, client
+        });
+        mine.message = { id: "panel_1" };
+        await handleButton(mine);
+        assert(mine.calls.replies[0].ephemeral);
+        assert(
+            customIds(mine.calls.replies[0]).includes("battle:attack")
+        );
+
+        // Spectator gets rejected.
+        const spec = mockDmButton({
+            customId: "battle:mypanel", userId: "u9",
+            channelId: session.channelId, client
+        });
+        spec.message = { id: "panel_1" };
+        await handleButton(spec);
+        assert(spec.calls.replies[0].content.includes("not in this"));
+        console.log("PASS: My Controls — ephemeral view, participant only");
+
+        // Clicking Attack inside the ephemeral: private-view ack AND
+        // the real public panel is edited (message.id ≠ panelMessageId).
+        const panelMsg = { edits: [], edit: async p => panelMsg.edits.push(p) };
+        const eph = mockDmButton({
+            customId: "battle:attack", userId: "u1",
+            channelId: session.channelId, client
+        });
+        eph.message = { id: "eph_1" };
+        eph.channel = {
+            send: async () => ({ id: "m" }),
+            messages: { fetch: async () => panelMsg }
+        };
+        await handleButton(eph);
+
+        const ackIds = customIds(eph.calls.updates[0]);
+        assert(ackIds.some(id => id?.startsWith("battle:roll:")));
+        assert.equal(panelMsg.edits.length, 1); // public panel refreshed
+        console.log("PASS: ephemeral action click updates all surfaces");
 
         cleanup(session);
     }

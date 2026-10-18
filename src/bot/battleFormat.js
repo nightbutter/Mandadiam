@@ -181,8 +181,15 @@ function rollButtonLabel(expected) {
 
 // Controls equally available to both participants — the only buttons
 // shown on the public panel while per-player DM panels are live.
+// "My Controls" replies ephemerally with the clicker's private view,
+// so a player whose DM never surfaced can still act.
 function sharedRow() {
     return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("battle:mypanel")
+            .setLabel("My Controls")
+            .setEmoji("📋")
+            .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
             .setCustomId("battle:refresh")
             .setLabel("Refresh")

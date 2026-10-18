@@ -55,6 +55,16 @@ async function sendBattleResult(channel, session, reason) {
     });
 }
 
+// True only when the click landed on the actual public panel message
+// — an ephemeral "My Controls" reply or a DM panel lives in the same
+// or a different channel but is a different message entirely.
+function isPanelMessage(interaction, session) {
+    return (
+        interaction.channelId === session.channelId &&
+        interaction.message?.id === session.panelMessageId
+    );
+}
+
 // The channel the public battle panel lives in — interactions from a
 // player's DM carry a different channelId, so resolve it explicitly.
 async function resolvePublicChannel(interaction, session) {
@@ -85,9 +95,17 @@ async function sendPrivatePanels(client, session) {
             session.privatePanels.set(
                 player.discordId, { channel, message }
             );
-        } catch {
+            console.log(
+                `[battle] DM panel sent to ${player.discordId} ` +
+                `(msg ${message.id})`
+            );
+        } catch (err) {
             session.privatePanels.delete(player.discordId);
             session.dmFailed.add(player.discordId);
+            console.warn(
+                `[battle] DM panel send failed for ` +
+                `${player.discordId}: ${err?.code ?? err?.message ?? err}`
+            );
         }
     }
 }
@@ -121,23 +139,32 @@ async function updatePrivatePanels(client, session) {
                 player.discordId, { channel, message }
             );
             session.dmFailed.delete(player.discordId);
-        } catch {
+            console.log(
+                `[battle] DM panel resent to ${player.discordId} ` +
+                `(msg ${message.id})`
+            );
+        } catch (err) {
             session.privatePanels.delete(player.discordId);
             session.dmFailed.add(player.discordId);
+            console.warn(
+                `[battle] DM panel update failed for ` +
+                `${player.discordId}: ${err?.code ?? err?.message ?? err}`
+            );
         }
     }
 }
 
 // Update every surface after a state change: the public panel (when
-// the interaction happened elsewhere) plus all private DM panels.
-// When the click was on the public panel itself, that message was
-// already updated via interaction.update — skip a duplicate edit.
+// the interaction happened on another message — a DM panel or an
+// ephemeral reply) plus all private DM panels. When the click was on
+// the public panel itself, that message was already updated via
+// interaction.update — skip a duplicate edit.
 async function refreshBattleViews(interaction, session, report = null) {
     // Private panels first: a DM that fails here flags dmFailed before
     // the public row renders, so the fallback shows usable controls.
     await updatePrivatePanels(interaction.client, session);
 
-    if (interaction.channelId !== session.channelId) {
+    if (!isPanelMessage(interaction, session)) {
         const channel = await resolvePublicChannel(interaction, session);
 
         if (channel) {
@@ -153,5 +180,6 @@ module.exports = {
     sendPrivatePanels,
     updatePrivatePanels,
     refreshBattleViews,
-    resolvePublicChannel
+    resolvePublicChannel,
+    isPanelMessage
 };
