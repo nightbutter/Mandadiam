@@ -704,6 +704,294 @@ async function run() {
         cleanup(session);
     }
 
+    // --- in-place navigation: Skills sub-view + Back -------------------
+
+    {
+        const session = startSession(); // u1 to act
+        const client = mockClient(new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]));
+
+        // Skills clicked on the DM panel → the SAME message transforms
+        // into the picker; no new ephemeral is spawned.
+        const skills = mockDmButton({
+            customId: "battle:skills", userId: "u1",
+            channelId: "dm_u1", client
+        });
+        skills.message = { id: "dm_panel_u1" };
+        await handleButton(skills);
+        assert.equal(skills.calls.replies.length, 0);
+        assert.equal(skills.calls.updates.length, 1);
+        const navIds = customIds(skills.calls.updates[0]);
+        assert(navIds.includes("battle:skill"));
+        assert(navIds.includes("battle:back"));
+        console.log("PASS: Skills transforms private panel in place");
+
+        // Snapshot state — Back must not touch ANY combat state.
+        const snapshot = JSON.stringify({
+            hp: session.battle.characters.map(c => c.hp),
+            cost: session.battle.characters.map(c => c.cost),
+            ex: session.battle.characters.map(c => c.ex),
+            turn: session.battle.turnNumber,
+            pending: session.pending
+        });
+        const back = mockDmButton({
+            customId: "battle:back", userId: "u1",
+            channelId: "dm_u1", client
+        });
+        back.message = { id: "dm_panel_u1" };
+        await handleButton(back);
+        assert.equal(back.calls.updates.length, 1);
+        assert(customIds(back.calls.updates[0]).includes("battle:attack"));
+        assert(!customIds(back.calls.updates[0]).includes("battle:back"));
+        assert.equal(
+            JSON.stringify({
+                hp: session.battle.characters.map(c => c.hp),
+                cost: session.battle.characters.map(c => c.cost),
+                ex: session.battle.characters.map(c => c.ex),
+                turn: session.battle.turnNumber,
+                pending: session.pending
+            }),
+            snapshot
+        );
+        console.log("PASS: Back rebuilds main view without mutation");
+
+        // Back for the INACTIVE player lands on the waiting view, not
+        // action controls — navigation follows current state.
+        const idleBack = mockDmButton({
+            customId: "battle:back", userId: "u2",
+            channelId: "dm_u2", client
+        });
+        idleBack.message = { id: "dm_panel_u2" };
+        await handleButton(idleBack);
+        const idleIds = customIds(idleBack.calls.updates[0]);
+        assert(!idleIds.includes("battle:attack"));
+        assert(idleIds.includes("battle:forfeit"));
+        assert(idleBack.calls.updates[0].content.includes("Waiting"));
+        console.log("PASS: Back on wrong turn returns waiting view");
+
+        // Spectator Back on the live session is rejected without a
+        // panel update; on a dead session it strips stale controls.
+        const specBack = mockDmButton({
+            customId: "battle:back", userId: "u9",
+            channelId: session.channelId, client
+        });
+        specBack.message = { id: "some_ephemeral" };
+        await handleButton(specBack);
+        assert.equal(specBack.calls.updates.length, 0);
+        assert.equal(specBack.calls.replies.length, 1);
+        console.log("PASS: Back rejects non-participants");
+
+        cleanup(session);
+    }
+
+    // --- Ultimate sub-view: detail + Back, confirm rolls in place -----
+
+    {
+        const chan = `vis_${++channelSeq}`;
+        const { session } = driver.start(
+            chan,
+            player("u1", "Hero", { ex: 100, exKey: "oblivion_edge", cost: 6 }),
+            player("u2", "Foe"),
+            { firstRolls: [18], secondRolls: [5] }
+        );
+        const client = mockClient(new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]));
+
+        const ult = mockDmButton({
+            customId: "battle:ultimate", userId: "u1",
+            channelId: "dm_u1", client
+        });
+        ult.message = { id: "dm_panel_u1" };
+        await handleButton(ult);
+        assert.equal(ult.calls.replies.length, 0);
+        const ultIds = customIds(ult.calls.updates[0]);
+        assert(ultIds.includes("battle:ultimate:confirm"));
+        assert(ultIds.includes("battle:back"));
+        assert(ult.calls.updates[0].content.includes("Oblivion Edge"));
+        assert(ult.calls.updates[0].content.includes("Ready"));
+        console.log("PASS: Ultimate nav shows detail + Back in place");
+
+        // Confirm → pending created; source becomes the main view —
+        // the roll button is right there.
+        const confirm = mockDmButton({
+            customId: "battle:ultimate:confirm", userId: "u1",
+            channelId: "dm_u1", client
+        });
+        confirm.message = { id: "dm_panel_u1" };
+        await handleButton(confirm);
+        assert(session.pending?.type === "ex");
+        const confirmIds = customIds(confirm.calls.updates[0]);
+        assert(
+            confirmIds.includes(`battle:roll:${session.pending.id}`)
+        );
+        console.log("PASS: Ultimate confirm → roll button in place");
+        cleanup(session);
+    }
+
+    // --- Forfeit sub-view navigates in place ---------------------------
+
+    {
+        const session = startSession();
+        const client = mockClient(new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]));
+
+        const ff = mockDmButton({
+            customId: "battle:forfeit", userId: "u2", // inactive player
+            channelId: "dm_u2", client
+        });
+        ff.message = { id: "dm_panel_u2" };
+        await handleButton(ff);
+        assert.equal(ff.calls.replies.length, 0);
+        const ffIds = customIds(ff.calls.updates[0]);
+        assert(ffIds.includes("battle:forfeit:confirm"));
+        assert(ffIds.includes("battle:back"));
+        assert.equal(session.battle.status, "active"); // not spent yet
+        console.log("PASS: Forfeit confirm is in-place for any participant");
+        cleanup(session);
+    }
+
+    // --- Off-turn Skills click is rejected, nothing mutates -----------
+
+    {
+        const session = startSession();
+        const client = mockClient(new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]));
+        const turnBefore = session.battle.turnNumber;
+
+        const off = mockDmButton({
+            customId: "battle:skills", userId: "u2",
+            channelId: "dm_u2", client
+        });
+        off.message = { id: "dm_panel_u2" };
+        await handleButton(off);
+        assert.equal(off.calls.updates.length, 1);
+        assert(off.calls.updates[0].content.includes("not your turn"));
+        assert(
+            !customIds(off.calls.updates[0]).includes("battle:skill")
+        );
+        assert.equal(session.battle.turnNumber, turnBefore);
+        assert(!session.pending);
+        console.log("PASS: off-turn Skills rejected — no mutation");
+        cleanup(session);
+    }
+
+    // --- Public-surface clicks still open ephemeral pickers -----------
+
+    {
+        const session = startSession();
+        session.panelMessageId = "panel_1";
+        session.dmFailed.add("u2"); // fallback row carries the buttons
+        const client = mockClient(new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]));
+
+        const pub = mockDmButton({
+            customId: "battle:skills", userId: "u1",
+            channelId: session.channelId, client
+        });
+        pub.message = { id: "panel_1" }; // clicked the public panel
+        await handleButton(pub);
+        assert.equal(pub.calls.updates.length, 0);
+        assert.equal(pub.calls.replies.length, 1);
+        assert(pub.calls.replies[0].ephemeral);
+        assert(customIds(pub.calls.replies[0]).includes("battle:back"));
+        console.log("PASS: public Skills click → ephemeral picker + Back");
+        cleanup(session);
+    }
+
+    // --- EX visibility: display agrees with the server gate ------------
+
+    {
+        const { exReadiness } = require("../../src/game/exGauge");
+        const session = startSession();
+        const hero = session.players[0].character;
+        hero.exKey = "oblivion_edge";
+
+        // Unready: EX 0 → field shows gauge, requirement, and reason.
+        hero.ex = 0;
+        let field = buildBattleEmbed(session).data.fields.find(
+            f => f.name.includes("Hero")
+        );
+        assert(field.value.includes("EX"));
+        assert(field.value.includes("0/100"));
+        assert(field.value.includes("Oblivion Edge"));
+        assert(field.value.includes("✗"));
+        console.log("PASS: EX field shows gauge + requirement + reason");
+
+        // The UI readiness IS the service gate — same function.
+        const defender = session.battle.characters.find(c => c !== hero);
+        hero.ex = 100;
+        hero.cost = 6;
+        const r = exReadiness(hero, defender);
+        assert(r.ok);
+        field = buildBattleEmbed(session).data.fields.find(
+            f => f.name.includes("Hero")
+        );
+        assert(field.value.includes("✓ ready"));
+
+        // useEx agrees with exReadiness at every point: drop the EX
+        // and BOTH report not ready.
+        hero.ex = 50;
+        assert.equal(exReadiness(hero, defender).error, "ex_not_ready");
+        const denied = bs.useEx(session, "u1");
+        assert.equal(denied.error, "ex_not_ready");
+        hero.cost = 0;
+        hero.ex = 100;
+        assert.equal(exReadiness(hero, defender).error, "insufficient_cost");
+        assert.equal(bs.useEx(session, "u1").error, "insufficient_cost");
+        console.log("PASS: useEx gate and display share exReadiness");
+
+        cleanup(session);
+    }
+
+    // --- Skill select lands on main view with the roll button ---------
+
+    {
+        const chan = `vis_${++channelSeq}`;
+        const { session } = driver.start(
+            chan,
+            player("u1", "Hero", { cost: 6 }),
+            player("u2", "Foe"),
+            { firstRolls: [18], secondRolls: [5] }
+        );
+        const client = mockClient(new Map([
+            ["u1", mockDmUser("u1")],
+            ["u2", mockDmUser("u2")]
+        ]));
+
+        const pick = {
+            calls: { replies: [], updates: [], deletes: 0 },
+            customId: "battle:skill",
+            values: ["power_strike"],
+            user: { id: "u1" },
+            channelId: "dm_u1",
+            client,
+            channel: { send: async () => ({ id: "m" }) },
+            message: { id: "dm_panel_u1" },
+            reply: async p => pick.calls.replies.push(p),
+            update: async p => pick.calls.updates.push(p),
+            deleteReply: async () => ({})
+        };
+        const { handleBattleSelect } = require("../../src/bot/buttons");
+        await handleBattleSelect(pick);
+
+        assert(session.pending?.type === "skill");
+        const ids = customIds(pick.calls.updates[0]);
+        assert(ids.includes(`battle:roll:${session.pending.id}`));
+        assert(!ids.includes("battle:skill")); // picker replaced
+        console.log("PASS: skill select → main view with roll button");
+        cleanup(session);
+    }
+
     console.log("\nAll battle visibility tests passed.");
 }
 

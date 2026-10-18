@@ -171,7 +171,7 @@ async function run() {
         const btn = mockButton({ customId: "battle:attack", userId: "u2" });
         await handleButton(btn);
         assert(
-            btn.calls.replies[0].content.includes("not your turn")
+            btn.calls.updates[0].content.includes("not your turn")
         );
         console.log("PASS: out-of-turn attack rejected");
         bs.forfeit(session, "u1");
@@ -200,10 +200,11 @@ async function run() {
         assert.equal(session.battle.turnNumber, before + 1);
         console.log("PASS: attack + manual rolls advance exactly one turn");
 
-        // Same button again — now it's u2's turn, not u1's.
+        // Same button again — now it's u2's turn, not u1's. The
+        // private surface heals in place with the rejection.
         await handleButton(btn);
         assert(
-            btn.calls.replies[0].content.includes("not your turn")
+            btn.calls.updates[1].content.includes("not your turn")
         );
         console.log("PASS: repeat click cannot double-apply");
         bs.forfeit(session, "u1");
@@ -246,9 +247,14 @@ async function run() {
         console.log("PASS: spectator forfeit rejected");
 
         // Step 1: forfeit asks for confirmation — nothing happens yet.
+        // Private surfaces navigate in place to the confirm sub-view.
         const mine = mockButton({ customId: "battle:forfeit", userId: "u1" });
         await handleButton(mine);
-        assert(mine.calls.replies[0].components.length === 1);
+        const promptIds = (mine.calls.updates[0].components ?? [])
+            .flatMap(r => r.components ?? [])
+            .map(c => c.data?.custom_id ?? c.customId);
+        assert(promptIds.includes("battle:forfeit:confirm"));
+        assert(promptIds.includes("battle:back"));
         assert.equal(session.battle.status, "active");
         console.log("PASS: forfeit asks for confirmation first");
 
@@ -261,13 +267,14 @@ async function run() {
         assert.equal(confirm.calls.updates[0].components.length, 0);
         console.log("PASS: confirmed forfeit ends battle");
 
-        // A stray cancel after the battle ended is still safe.
+        // A stray cancel after the battle ended is still safe —
+        // legacy cancel ids route to Back → dead-session rejection.
         const cancel = mockButton({
             customId: "battle:forfeit:cancel", userId: "u1"
         });
         await handleButton(cancel);
         assert(
-            cancel.calls.updates[0].content.includes("cancelled")
+            cancel.calls.replies[0].content.includes("no longer active")
         );
         console.log("PASS: forfeit cancel is safe");
     }

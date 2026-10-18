@@ -12,6 +12,7 @@ const {
     buildPrivateView,
     buildSkillSelectMenu,
     buildExPrompt,
+    backButton,
     formatAttackReport
 } = require("./battleFormat");
 const {
@@ -500,7 +501,10 @@ async function handleMyPanel(interaction) {
     session.ephemeralPanels.set(interaction.user.id, interaction);
 }
 
-// Opens an ephemeral skill picker for the current turn owner.
+// Skills sub-view — on a private surface (DM panel or a My Controls
+// ephemeral) the message transforms in place; on the public panel an
+// ephemeral picker is spawned instead (the shared panel can't morph
+// per-user). Both paths end at the same battle:skill select.
 async function handleBattleSkills(interaction) {
     const session = sessionFor(interaction);
 
@@ -525,11 +529,21 @@ async function handleBattleSkills(interaction) {
         return;
     }
 
-    await interaction.reply({
-        content: "✨ Choose a skill:",
-        ephemeral: true,
-        components: [buildSkillSelectMenu(session)]
-    });
+    if (isPanelMessage(interaction, session)) {
+        await interaction.reply({
+            content: "✨ Choose a skill:",
+            ephemeral: true,
+            components: [
+                buildSkillSelectMenu(session),
+                new ActionRowBuilder().addComponents(backButton())
+            ]
+        });
+        return;
+    }
+
+    await interaction.update(
+        buildPrivateView(session, interaction.user.id, "skills")
+    );
 }
 
 // The picked skill is validated exactly as before — then becomes a
@@ -550,6 +564,8 @@ async function handleSkillSelect(interaction) {
         session, interaction.user.id, skillKey
     );
 
+    const backRow = new ActionRowBuilder().addComponents(backButton());
+
     if (!outcome.ok) {
         const messages = {
             ...GATE_MESSAGES,
@@ -566,18 +582,16 @@ async function handleSkillSelect(interaction) {
 
         await interaction.update({
             content: `❌ ${messages[outcome.error] ?? "Skill failed."}`,
-            components: []
+            components: [backRow]
         });
         return;
     }
 
-    // Acknowledge the ephemeral picker; the roll happens on the panel.
-    await interaction.update({
-        content:
-            `✨ **${outcome.expected ? "Skill armed" : "Skill"}** — ` +
-            "roll your dice on the battle panel!",
-        components: []
-    });
+    // The picker message becomes the private main view again — the
+    // pending roll button is right there, no dead-end message.
+    await interaction.update(
+        buildPrivateView(session, interaction.user.id)
+    );
 
     await refreshBattleViews(
         interaction, session,
@@ -614,25 +628,34 @@ async function handleBattleUltimate(interaction) {
     }
 
     const character = session.battle.currentTurn?.character;
-    const { content, ready } = buildExPrompt(character);
+    const defender = session.battle.characters.find(
+        c => c !== character
+    );
+    const { content, ready } = buildExPrompt(character, defender);
 
-    await interaction.reply({
-        content,
-        ephemeral: true,
-        components: [
-            new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId("battle:ultimate:confirm")
-                    .setLabel("Unleash!")
-                    .setStyle(ButtonStyle.Danger)
-                    .setDisabled(!ready),
-                new ButtonBuilder()
-                    .setCustomId("battle:ultimate:cancel")
-                    .setLabel("Cancel")
-                    .setStyle(ButtonStyle.Secondary)
-            )
-        ]
-    });
+    if (isPanelMessage(interaction, session)) {
+        // Clicked the public fallback row — the shared panel can't
+        // morph per-user, so the detail opens ephemerally.
+        await interaction.reply({
+            content,
+            ephemeral: true,
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId("battle:ultimate:confirm")
+                        .setLabel("Unleash!")
+                        .setStyle(ButtonStyle.Danger)
+                        .setDisabled(!ready),
+                    backButton()
+                )
+            ]
+        });
+        return;
+    }
+
+    await interaction.update(
+        buildPrivateView(session, interaction.user.id, "ultimate")
+    );
 }
 
 async function handleUltimateConfirm(interaction) {
@@ -667,30 +690,50 @@ async function handleUltimateConfirm(interaction) {
         await interaction.update({
             content:
                 `❌ ${messages[outcome.error] ?? "Ultimate failed."}`,
-            components: []
+            components: [
+                new ActionRowBuilder().addComponents(backButton())
+            ]
         });
         return;
     }
 
-    // The public panel is a different message — edit it via the
-    // channel, same as the forfeit flow.
+    // The confirm message returns to the private main view — with a
+    // pending action that view already carries the roll button.
+    await interaction.update(
+        buildPrivateView(session, interaction.user.id)
+    );
+
     await refreshBattleViews(
         interaction, session,
         `💥 Ultimate declared — ` +
         (outcome.expected?.text ?? "roll when ready")
     );
-
-    await interaction.update({
-        content: "💥 Ultimate unleashed — roll your dice on the panel!",
-        components: []
-    });
 }
 
-async function handleUltimateCancel(interaction) {
-    await interaction.update({
-        content: "Ultimate held — battle continues.",
-        components: []
-    });
+// Back — pure navigation. Rebuilds the clicker's CURRENT private
+// view at click time: no COST/EX spent, no dice rolled, no turn
+// consumed, and a changed turn yields the correct waiting view.
+async function handleBattleBack(interaction) {
+    const session = sessionFor(interaction);
+
+    if (!session) {
+        await deadSessionAck(interaction);
+        return;
+    }
+
+    if (
+        !session.players.some(
+            p => p.discordId === interaction.user.id
+        ) ||
+        isPanelMessage(interaction, session)
+    ) {
+        await safeReply(interaction, "Only battle participants.");
+        return;
+    }
+
+    await interaction.update(
+        buildPrivateView(session, interaction.user.id)
+    );
 }
 
 // Step 1 — confirm prompt (ephemeral) so a stray click can't end
@@ -714,22 +757,26 @@ async function handleBattleForfeit(interaction) {
         return;
     }
 
-    await interaction.reply({
-        content: "🏳️ Forfeit this battle? The opponent wins.",
-        ephemeral: true,
-        components: [
-            new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId("battle:forfeit:confirm")
-                    .setLabel("Confirm Forfeit")
-                    .setStyle(ButtonStyle.Danger),
-                new ButtonBuilder()
-                    .setCustomId("battle:forfeit:cancel")
-                    .setLabel("Cancel")
-                    .setStyle(ButtonStyle.Secondary)
-            )
-        ]
-    });
+    if (isPanelMessage(interaction, session)) {
+        await interaction.reply({
+            content: "🏳️ Forfeit this battle? The opponent wins.",
+            ephemeral: true,
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId("battle:forfeit:confirm")
+                        .setLabel("Confirm Forfeit")
+                        .setStyle(ButtonStyle.Danger),
+                    backButton()
+                )
+            ]
+        });
+        return;
+    }
+
+    await interaction.update(
+        buildPrivateView(session, interaction.user.id, "forfeit")
+    );
 }
 
 async function handleForfeitConfirm(interaction) {
@@ -779,13 +826,6 @@ async function handleForfeitConfirm(interaction) {
     });
 }
 
-async function handleForfeitCancel(interaction) {
-    await interaction.update({
-        content: "Forfeit cancelled — battle continues.",
-        components: []
-    });
-}
-
 const handlers = {
     "challenge:accept": handleChallengeAccept,
     "challenge:decline": handleChallengeDecline,
@@ -793,12 +833,14 @@ const handlers = {
     "battle:skills": handleBattleSkills,
     "battle:ultimate": handleBattleUltimate,
     "battle:ultimate:confirm": handleUltimateConfirm,
-    "battle:ultimate:cancel": handleUltimateCancel,
+    // Legacy cancel ids on pre-refactor panels route to Back.
+    "battle:ultimate:cancel": handleBattleBack,
+    "battle:forfeit:cancel": handleBattleBack,
+    "battle:back": handleBattleBack,
     "battle:mypanel": handleMyPanel,
     "battle:refresh": handleBattleRefresh,
     "battle:forfeit": handleBattleForfeit,
-    "battle:forfeit:confirm": handleForfeitConfirm,
-    "battle:forfeit:cancel": handleForfeitCancel
+    "battle:forfeit:confirm": handleForfeitConfirm
 };
 
 async function handleButton(interaction) {

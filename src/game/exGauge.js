@@ -19,6 +19,8 @@
  * characters created through createBattle/toBattleCharacter.
  */
 
+const { getExSkill } = require("./exSkills");
+
 const EX_MAX = 100;
 const EX_ATTACK_GAIN = 20;
 const EX_DAMAGE_TAKEN_GAIN = 10;
@@ -60,6 +62,51 @@ function consumeEx(character) {
     return true;
 }
 
+// Read-only Ultimate eligibility — the single source of truth used by
+// both battleService.useEx (server-side gate) and every UI readiness
+// display, so the two can never disagree. Error codes match useEx's
+// historical gate order exactly.
+function exReadiness(attacker, defender) {
+    if (!attacker || attacker.hp <= 0) {
+        return {
+            ok: false, error: "invalid_actor",
+            reason: "your character can't act"
+        };
+    }
+    if (!attacker.exKey) {
+        return {
+            ok: false, error: "no_ex_assigned",
+            reason: "no Ultimate assigned"
+        };
+    }
+    const exDef = getExSkill(attacker.exKey);
+    if (!exDef) {
+        return {
+            ok: false, error: "unknown_ex",
+            reason: "unknown Ultimate"
+        };
+    }
+    if (attacker.ex !== EX_MAX) {
+        return {
+            ok: false, error: "ex_not_ready",
+            reason: `EX ${attacker.ex ?? 0}/${EX_MAX} — not full`
+        };
+    }
+    if (!defender || defender.hp <= 0) {
+        return {
+            ok: false, error: "invalid_target",
+            reason: "no valid target"
+        };
+    }
+    if (attacker.cost < exDef.cost) {
+        return {
+            ok: false, error: "insufficient_cost",
+            reason: `needs ${exDef.cost} COST (have ${attacker.cost})`
+        };
+    }
+    return { ok: true, exDef };
+}
+
 module.exports = {
     EX_MAX,
     EX_ATTACK_GAIN,
@@ -67,5 +114,6 @@ module.exports = {
     addEx,
     onAttackActionEx,
     onDamageTakenEx,
-    consumeEx
+    consumeEx,
+    exReadiness
 };

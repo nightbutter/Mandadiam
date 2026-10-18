@@ -65,6 +65,7 @@ async function sendBattleResult(channel, session, reason) {
 // or a different channel but is a different message entirely.
 function isPanelMessage(interaction, session) {
     return (
+        session.panelMessageId != null &&
         interaction.channelId === session.channelId &&
         interaction.message?.id === session.panelMessageId
     );

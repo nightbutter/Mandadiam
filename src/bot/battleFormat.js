@@ -9,7 +9,7 @@ const {
 } = require("discord.js");
 const { getSkill } = require("../game/skills");
 const { getExSkill } = require("../game/exSkills");
-const { EX_MAX } = require("../game/exGauge");
+const { EX_MAX, exReadiness } = require("../game/exGauge");
 const { describeRoll } = require("../game/manualRolls");
 
 const MAX_LOG_LINES = 6;
@@ -55,8 +55,32 @@ function statusLine(character) {
         .join(", ");
 }
 
+// EX gauge + Ultimate line. Readiness comes straight from
+// exReadiness — the same function the useEx gate runs, so what the
+// panel shows can never disagree with what the server allows.
+function exLine(session, character) {
+    if (character.ex == null) {
+        return null;
+    }
+
+    const opponent = session.battle.characters.find(
+        c => c !== character
+    );
+    const exDef = character.exKey ? getExSkill(character.exKey) : null;
+    const readiness = exReadiness(character, opponent);
+
+    return (
+        `EX ${exBar(character.ex)} ${character.ex}/${EX_MAX}` +
+        (exDef
+            ? ` · 💥 ${exDef.name} (${exDef.cost} COST) — ` +
+              (readiness.ok ? "✓ ready" : `✗ ${readiness.reason}`)
+            : " · no Ultimate")
+    );
+}
+
 function characterField(session, character) {
     const statuses = statusLine(character);
+    const ex = exLine(session, character);
 
     return {
         name:
@@ -65,9 +89,10 @@ function characterField(session, character) {
         value:
             `${hpBar(character.hp, character.maxHp)} ` +
             `**${character.hp}/${character.maxHp}**\n` +
-            `COST ${costPips(character.cost)} ${character.cost}/6\n` +
             `ATK ${character.atk} · DEF ${character.def} · ` +
-            `SPE ${character.spe}` +
+            `SPE ${character.spe}\n` +
+            `COST ${costPips(character.cost)} ${character.cost}/6` +
+            (ex ? `\n${ex}` : "") +
             (statuses ? `\n*${statuses}*` : ""),
         inline: true
     };
@@ -227,10 +252,35 @@ function forfeitButton() {
         .setStyle(ButtonStyle.Danger);
 }
 
+// Back is pure navigation — it re-renders main at click time, so it
+// can never spend resources, roll dice, or restore a stale turn.
+function backButton() {
+    return new ButtonBuilder()
+        .setCustomId("battle:back")
+        .setLabel("Back")
+        .setEmoji("◀️")
+        .setStyle(ButtonStyle.Secondary);
+}
+
+function unleashButton(ready) {
+    return new ButtonBuilder()
+        .setCustomId("battle:ultimate:confirm")
+        .setLabel("Unleash!")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(!ready);
+}
+
 // One player's private (DM) battle panel: the same status embed as
 // the public view, but only the controls THIS player can currently
 // use — a real per-user hide, not just a permission check.
-function buildPrivateView(session, discordId) {
+//
+// `nav` picks the sub-view rendered INSIDE the same message — the
+// panel transforms in place instead of spawning picker ephemerals:
+//   "main"     — action buttons / roll / waiting (default)
+//   "skills"   — skill select + Back
+//   "ultimate" — EX detail + Unleash + Back
+//   "forfeit"  — confirm prompt + Back (any participant)
+function buildPrivateView(session, discordId, nav = "main") {
     const { battle } = session;
     const embeds = [buildBattleEmbed(session)];
 
@@ -239,6 +289,26 @@ function buildPrivateView(session, discordId) {
             content: "🏆 Battle finished — see the channel for results.",
             embeds,
             components: []
+        };
+    }
+
+    // Forfeit is legal for either participant in ANY state —
+    // including while a roll is pending (it cancels the sequence) —
+    // so its confirm sub-view sits above the pending/actor checks.
+    if (nav === "forfeit") {
+        return {
+            content:
+                "🏳️ Forfeit this battle? The opponent wins.",
+            embeds,
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId("battle:forfeit:confirm")
+                        .setLabel("Confirm Forfeit")
+                        .setStyle(ButtonStyle.Danger),
+                    backButton()
+                )
+            ]
         };
     }
 
@@ -275,8 +345,43 @@ function buildPrivateView(session, discordId) {
     );
 
     if (mine && mine.character === actor) {
+        if (nav === "skills") {
+            return {
+                content: "✨ Choose a skill — or go Back.",
+                embeds,
+                components: [
+                    buildSkillSelectMenu(session),
+                    new ActionRowBuilder().addComponents(
+                        backButton(),
+                        forfeitButton()
+                    )
+                ]
+            };
+        }
+
+        if (nav === "ultimate") {
+            const defender = battle.characters.find(c => c !== actor);
+            const prompt = buildExPrompt(actor, defender);
+            return {
+                content: prompt.content,
+                embeds,
+                components: [
+                    new ActionRowBuilder().addComponents(
+                        unleashButton(prompt.ready),
+                        backButton()
+                    )
+                ]
+            };
+        }
+
+        const ultReady = exReadiness(
+            actor, battle.characters.find(c => c !== actor)
+        ).ok;
+
         return {
-            content: "⚔️ Your turn — choose an action.",
+            content:
+                "⚔️ Your turn — choose an action." +
+                (ultReady ? " 💥 **Ultimate ready!**" : ""),
             embeds,
             components: [
                 new ActionRowBuilder().addComponents(
@@ -409,15 +514,19 @@ function buildSkillSelectMenu(session) {
     );
 }
 
-// Ephemeral Ultimate detail/confirmation content. Returns the text
-// plus whether activation is currently legal — the service still
-// re-validates everything at confirm time.
-function buildExPrompt(character) {
-    const exDef = character.exKey ? getExSkill(character.exKey) : null;
+// Ultimate detail/confirmation content — shown inside the private
+// panel's "ultimate" nav view (and the ephemeral fallback). Returns
+// the text plus whether activation is currently legal per
+// exReadiness; the service still re-validates everything at confirm.
+function buildExPrompt(character, defender) {
+    const readiness = exReadiness(character, defender);
+    const exDef =
+        readiness.exDef ??
+        (character?.exKey ? getExSkill(character.exKey) : null);
 
     if (!exDef) {
         return {
-            content: "💥 This character has no Ultimate assigned.",
+            content: `💥 ${readiness.reason ?? "No Ultimate available."}`,
             ready: false
         };
     }
@@ -425,22 +534,13 @@ function buildExPrompt(character) {
     const lines = [
         `💥 **${exDef.name}**`,
         exDef.description,
-        `COST: ${exDef.cost} · EX: ${character.ex ?? 0}/${EX_MAX}`
+        `COST ${exDef.cost} · EX ${character.ex ?? 0}/${EX_MAX}`,
+        readiness.ok
+            ? "✅ Ready to unleash!"
+            : `❌ ${readiness.reason}`
     ];
 
-    let ready = true;
-
-    if (character.ex !== EX_MAX) {
-        lines.push("❌ EX gauge not full");
-        ready = false;
-    } else if (character.cost < exDef.cost) {
-        lines.push("❌ Not enough COST");
-        ready = false;
-    } else {
-        lines.push("✅ Ready to unleash!");
-    }
-
-    return { content: lines.join("\n"), ready };
+    return { content: lines.join("\n"), ready: readiness.ok };
 }
 
 function ownerOf(session, character) {
@@ -625,5 +725,6 @@ module.exports = {
     rollButtonLabel,
     buildSkillSelectMenu,
     buildExPrompt,
+    backButton,
     exBar
 };

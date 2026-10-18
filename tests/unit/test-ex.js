@@ -370,18 +370,21 @@ async function run() {
             channelId: session.channelId
         });
         await handleButton(oot);
-        assert(oot.calls.replies[0].content.includes("not your turn"));
+        // Participant surface heals in place — the rejection text is
+        // rendered on top of their current private view.
+        assert(oot.calls.updates[0].content.includes("not your turn"));
         console.log("PASS: spectator/out-of-turn Ultimate rejected");
 
-        // turn owner gets the detail prompt
+        // turn owner gets the detail prompt — in place on the
+        // private surface (not a separate ephemeral).
         const owner = mockButton({
             customId: "battle:ultimate", userId: "u1",
             channelId: session.channelId
         });
         await handleButton(owner);
-        assert(owner.calls.replies[0].ephemeral);
+        assert.equal(owner.calls.replies.length, 0);
         assert(
-            owner.calls.replies[0].content.includes("Oblivion Edge")
+            owner.calls.updates[0].content.includes("Oblivion Edge")
         );
         console.log("PASS: Ultimate button opens detail prompt");
 
@@ -431,13 +434,14 @@ async function run() {
         assert.equal(exBar(0), "░░░░░░░░░░");
         assert.equal(exBar(50), "█████░░░░░");
         assert.equal(exBar(100), "██████████");
-        const notReady = buildExPrompt({ ex: 60, cost: 5, exKey: "oblivion_edge" });
+        const foe = { hp: 100, cost: 0 };
+        const notReady = buildExPrompt({ ex: 60, cost: 5, exKey: "oblivion_edge" }, foe);
         assert(!notReady.ready);
         assert(notReady.content.includes("not full"));
-        const noCost = buildExPrompt({ ex: 100, cost: 2, exKey: "oblivion_edge" });
+        const noCost = buildExPrompt({ ex: 100, cost: 2, exKey: "oblivion_edge" }, foe);
         assert(!noCost.ready);
         assert(noCost.content.includes("COST"));
-        const ready = buildExPrompt({ ex: 100, cost: 5, exKey: "oblivion_edge" });
+        const ready = buildExPrompt({ ex: 100, cost: 5, exKey: "oblivion_edge" }, foe);
         assert(ready.ready);
         console.log("PASS: EX bar + availability reasons");
     }

@@ -2,8 +2,7 @@ const { createBattle, startTurn, performAction, performExAction, endTurn } = req
 const { determineTurnOrder } = require("../combat");
 const manualRolls = require("../manualRolls");
 const { getSkill } = require("../skills");
-const { getExSkill } = require("../exSkills");
-const { EX_MAX } = require("../exGauge");
+const { exReadiness } = require("../exGauge");
 
 // In-memory PvP battle sessions and challenges, keyed by Discord channel.
 // HP and COST are transient battle state, so sessions live in memory
@@ -382,7 +381,9 @@ function useSkill(session, discordId, skillKey, options = {}) {
 }
 
 // EX/Ultimate activation — all the same gates as before; gauge and
-// COST are only consumed inside performExAction at resolution.
+// COST are only consumed inside performExAction at resolution. The
+// eligibility checks come from exReadiness — the same function every
+// UI surface renders, so the display and the gate can't disagree.
 function useEx(session, discordId, options = {}) {
     const gate = gateAction(session, discordId);
 
@@ -392,36 +393,15 @@ function useEx(session, discordId, options = {}) {
 
     const { battle } = session;
     const attacker = battle.currentTurn?.character;
-
-    if (!attacker || attacker.hp <= 0) {
-        return { ok: false, error: "invalid_actor" };
-    }
-
-    if (!attacker.exKey) {
-        return { ok: false, error: "no_ex_assigned" };
-    }
-
-    const exDef = getExSkill(attacker.exKey);
-
-    if (!exDef) {
-        return { ok: false, error: "unknown_ex" };
-    }
-
-    if (attacker.ex !== EX_MAX) {
-        return { ok: false, error: "ex_not_ready" };
-    }
-
     const defender = battle.characters.find(c => c !== attacker);
 
-    if (!defender || defender.hp <= 0) {
-        return { ok: false, error: "invalid_target" };
+    const readiness = exReadiness(attacker, defender);
+
+    if (!readiness.ok) {
+        return { ok: false, error: readiness.error };
     }
 
-    // Same pre-dice COST validation as skills — the authoritative
-    // spend still happens inside performExAction at resolution.
-    if (attacker.cost < exDef.cost) {
-        return { ok: false, error: "insufficient_cost" };
-    }
+    const exDef = readiness.exDef;
 
     return createActionPending(
         session,

@@ -252,18 +252,21 @@ async function run() {
             channelId: session.channelId
         });
         await handleButton(oot);
-        assert(oot.calls.replies[0].content.includes("not your turn"));
+        assert(oot.calls.updates[0].content.includes("not your turn"));
         console.log("PASS: out-of-turn Skills click rejected");
 
-        // turn owner gets the ephemeral picker
+        // turn owner's private panel morphs into the picker in place
         const owner = mockButton({
             customId: "battle:skills", userId: "u1",
             channelId: session.channelId
         });
         await handleButton(owner);
-        assert.equal(owner.calls.replies.length, 1);
-        assert(owner.calls.replies[0].ephemeral);
-        console.log("PASS: Skills button opens ephemeral picker");
+        assert.equal(owner.calls.replies.length, 0);
+        assert.equal(owner.calls.updates.length, 1);
+        assert(
+            owner.calls.updates[0].content.includes("Choose a skill")
+        );
+        console.log("PASS: Skills button opens picker in place");
 
         // menu lists all three skills with cost
         const menu = buildSkillSelectMenu(session)
@@ -282,6 +285,7 @@ async function run() {
         const turnBefore = session.battle.turnNumber;
         await handleBattleSelect(sel);
         assert(session.pending);
+        const pendingId = session.pending.id;
         while (session.pending) {
             const exp = bs.expectedRoll(session);
             await handleButton(mockButton({
@@ -291,7 +295,12 @@ async function run() {
             }));
         }
         assert.equal(session.battle.turnNumber, turnBefore + 1);
-        assert.equal(sel.calls.updates[0].components.length, 0);
+        // The picker message became the private main view — carrying
+        // the armed action's own Roll button (battle:roll:<id>).
+        const selIds = (sel.calls.updates[0].components ?? [])
+            .flatMap(r => r.components ?? [])
+            .map(c => c.data?.custom_id ?? c.customId);
+        assert(selIds.includes(`battle:roll:${pendingId}`));
         console.log("PASS: skill selection resolves exactly one action");
 
         // stale session → safe failure (u9 has no session anywhere)

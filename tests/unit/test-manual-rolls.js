@@ -522,7 +522,7 @@ async function run() {
         });
         await handleButton(stale);
         assert(
-            stale.calls.replies[0].content.includes("no longer needed")
+            stale.calls.updates[0].content.includes("no longer needed")
         );
 
         // New action gets a different id.
@@ -568,7 +568,7 @@ async function run() {
         });
         await handleButton(wrong);
         assert(
-            wrong.calls.replies[0].content.includes("not yours")
+            wrong.calls.updates[0].content.includes("not yours")
         );
         assert.equal(session.pending.attackerRolls.length, 0);
 
