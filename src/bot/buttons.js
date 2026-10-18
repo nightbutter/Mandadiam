@@ -9,6 +9,7 @@ const {
     pushLog,
     buildBattleEmbed,
     buildBattleRow,
+    buildPrivateView,
     buildSkillSelectMenu,
     buildExPrompt,
     formatAttackReport
@@ -16,7 +17,11 @@ const {
 const {
     sendBattlePanel,
     updateBattlePanel,
-    sendBattleResult
+    sendBattleResult,
+    sendPrivatePanels,
+    updatePrivatePanels,
+    refreshBattleViews,
+    resolvePublicChannel
 } = require("./battlePanel");
 
 // Dispatches MessageComponent button interactions. Every handler
@@ -27,6 +32,35 @@ const STALE_MESSAGE =
 
 async function safeReply(interaction, content) {
     await interaction.reply({ content, ephemeral: true });
+}
+
+// A component interaction can come from the public battle panel or
+// from a player's DM panel — the session lives under the public
+// channel id in the first case and under the player's id otherwise.
+function sessionFor(interaction) {
+    return battleService.getSession(interaction.channelId) ??
+        battleService.getSessionForPlayer(interaction.user.id) ??
+        null;
+}
+
+// Acknowledge the click on whichever surface it came from — public
+// panel gets the shared embed + shared row, a DM gets that player's
+// private view — then push the new state to every other surface.
+async function ackAndRefresh(interaction, session, report = null) {
+    if (interaction.channelId === session.channelId) {
+        await interaction.update({
+            embeds: [buildBattleEmbed(session, report)],
+            components: session.battle.status === "finished"
+                ? []
+                : [buildBattleRow(session)]
+        });
+    } else {
+        await interaction.update(
+            buildPrivateView(session, interaction.user.id)
+        );
+    }
+
+    await refreshBattleViews(interaction, session, report);
 }
 
 async function handleChallengeAccept(interaction) {
@@ -98,6 +132,10 @@ async function handleChallengeAccept(interaction) {
         components: []
     });
 
+    // Private panels first — DM failures flag dmFailed before the
+    // public row is rendered, so the fallback shows real controls.
+    await sendPrivatePanels(interaction.client, session);
+
     // Initiative is manual now — both players roll their own d20 on
     // the panel before the first turn begins.
     await sendBattlePanel(
@@ -151,7 +189,7 @@ const GATE_MESSAGES = {
 // Action selected → validation passed → the panel now waits for the
 // manual roll sequence (first die: the attacker's contest d20).
 async function handleBattleAttack(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await safeReply(interaction, STALE_MESSAGE);
@@ -168,10 +206,7 @@ async function handleBattleAttack(interaction) {
         return;
     }
 
-    await interaction.update({
-        embeds: [buildBattleEmbed(session, "⚔️ Attack declared!")],
-        components: [buildBattleRow(session)]
-    });
+    await ackAndRefresh(interaction, session, "⚔️ Attack declared!");
 }
 
 // Shared tail once a pending action resolves — same reporting and
@@ -263,7 +298,7 @@ async function announceResolved(interaction, session, outcome) {
 // A player clicked a roll button — server-side die, exactly one per
 // authorized click, action resolves once all dice are collected.
 async function handleRoll(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await safeReply(interaction, STALE_MESSAGE);
@@ -312,17 +347,13 @@ async function handleRoll(interaction) {
     );
 
     if (outcome.pending) {
-        await interaction.update({
-            embeds: [
-                buildBattleEmbed(
-                    session,
-                    `🎲 <@${interaction.user.id}> rolled ` +
-                    `**${rolled.value}** — ` +
-                    `next: ${outcome.expected.text}`
-                )
-            ],
-            components: [buildBattleRow(session)]
-        });
+        await ackAndRefresh(
+            interaction,
+            session,
+            `🎲 <@${interaction.user.id}> rolled ` +
+            `**${rolled.value}** — ` +
+            `next: ${outcome.expected.text}`
+        );
         return;
     }
 
@@ -332,44 +363,47 @@ async function handleRoll(interaction) {
             ? "Not enough COST."
             : outcome.result?.message ?? "That action failed.";
 
-        await interaction.update({
-            embeds: [buildBattleEmbed(session, `❌ ${message}`)],
-            components: [buildBattleRow(session)]
-        });
+        await ackAndRefresh(interaction, session, `❌ ${message}`);
         return;
     }
 
     const report = await announceResolved(interaction, session, outcome);
 
-    await interaction.update({
-        embeds: [buildBattleEmbed(session, report)],
-        components: outcome.finished ? [] : [buildBattleRow(session)]
-    });
+    await ackAndRefresh(interaction, session, report);
 
     if (outcome.finished) {
-        await sendBattleResult(
-            interaction.channel, session, "knockout"
-        );
+        const channel = await resolvePublicChannel(interaction, session);
+
+        if (channel) {
+            await sendBattleResult(channel, session, "knockout");
+        }
     }
 }
 
 async function handleBattleRefresh(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await safeReply(interaction, STALE_MESSAGE);
         return;
     }
 
-    await interaction.update({
-        embeds: [buildBattleEmbed(session)],
-        components: [buildBattleRow(session)]
-    });
+    if (interaction.channelId === session.channelId) {
+        await interaction.update({
+            embeds: [buildBattleEmbed(session)],
+            components: [buildBattleRow(session)]
+        });
+        return;
+    }
+
+    await interaction.update(
+        buildPrivateView(session, interaction.user.id)
+    );
 }
 
 // Opens an ephemeral skill picker for the current turn owner.
 async function handleBattleSkills(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await safeReply(interaction, STALE_MESSAGE);
@@ -401,7 +435,7 @@ async function handleBattleSkills(interaction) {
 // The picked skill is validated exactly as before — then becomes a
 // pending manual-roll action instead of resolving immediately.
 async function handleSkillSelect(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await interaction.update({
@@ -445,8 +479,8 @@ async function handleSkillSelect(interaction) {
         components: []
     });
 
-    await updateBattlePanel(
-        interaction.channel, session,
+    await refreshBattleViews(
+        interaction, session,
         `✨ Skill declared — ${outcome.expected.text}`
     );
 }
@@ -455,7 +489,7 @@ async function handleSkillSelect(interaction) {
 // turn owner — shows name, effect, COST, gauge and a reason if it
 // can't fire. The confirm click re-validates everything via useEx.
 async function handleBattleUltimate(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await safeReply(interaction, STALE_MESSAGE);
@@ -500,7 +534,7 @@ async function handleBattleUltimate(interaction) {
 }
 
 async function handleUltimateConfirm(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await interaction.update({
@@ -538,8 +572,8 @@ async function handleUltimateConfirm(interaction) {
 
     // The public panel is a different message — edit it via the
     // channel, same as the forfeit flow.
-    await updateBattlePanel(
-        interaction.channel, session,
+    await refreshBattleViews(
+        interaction, session,
         `💥 Ultimate declared — ${outcome.expected.text}`
     );
 
@@ -559,7 +593,7 @@ async function handleUltimateCancel(interaction) {
 // Step 1 — confirm prompt (ephemeral) so a stray click can't end
 // a battle. The actual forfeit runs only on battle:forfeit:confirm.
 async function handleBattleForfeit(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await safeReply(interaction, STALE_MESSAGE);
@@ -596,7 +630,7 @@ async function handleBattleForfeit(interaction) {
 }
 
 async function handleForfeitConfirm(interaction) {
-    const session = battleService.getSession(interaction.channelId);
+    const session = sessionFor(interaction);
 
     if (!session) {
         await interaction.update({
@@ -625,9 +659,14 @@ async function handleForfeitConfirm(interaction) {
 
     // The public panel is a different message — edit it via the
     // channel, since this click targets the ephemeral confirm prompt.
-    await updateBattlePanel(interaction.channel, session);
+    const channel = await resolvePublicChannel(interaction, session);
 
-    await sendBattleResult(interaction.channel, session, "forfeit");
+    if (channel) {
+        await updateBattlePanel(channel, session);
+        await sendBattleResult(channel, session, "forfeit");
+    }
+
+    await updatePrivatePanels(interaction.client, session);
 
     await interaction.update({
         content:

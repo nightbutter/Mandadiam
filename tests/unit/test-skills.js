@@ -294,8 +294,8 @@ async function run() {
         assert.equal(sel.calls.updates[0].components.length, 0);
         console.log("PASS: skill selection resolves exactly one action");
 
-        // stale session → safe failure
-        const stale = mockSelect("u1", "nowhere", ["power_strike"]);
+        // stale session → safe failure (u9 has no session anywhere)
+        const stale = mockSelect("u9", "nowhere", ["power_strike"]);
         await handleBattleSelect(stale);
         assert(
             stale.calls.updates[0].content.includes("no longer active")

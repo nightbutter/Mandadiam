@@ -200,7 +200,12 @@ function startBattle(channelId, playerOne, playerTwo, options = {}) {
         // Discord layer attaches panelMessageId and appends short lines
         // to log for the battle panel; the engine ignores both.
         log: [],
-        pending: null
+        pending: null,
+        // Per-player DM panels: discordId → { channel, message }.
+        // dmFailed holds ids whose DMs can't be delivered — the public
+        // panel falls back to shared controls while it's non-empty.
+        privatePanels: new Map(),
+        dmFailed: new Set()
     };
 
     battlesByChannel.set(channelId, session);

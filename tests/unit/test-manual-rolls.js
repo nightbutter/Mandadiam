@@ -543,6 +543,9 @@ async function run() {
 
     {
         const session = freshBattle();
+        // DM-unavailable → the public fallback row carries the roll
+        // button (per-player DM panels hold it otherwise).
+        session.dmFailed.add("u2");
         const atk = mockButton({
             customId: "battle:attack", userId: "u1",
             channelId: session.channelId

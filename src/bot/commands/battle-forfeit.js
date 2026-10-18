@@ -7,7 +7,8 @@ module.exports = {
     async execute(interaction) {
         const battleService = require("../../game/services/battleService");
         const { pushLog } = require("../battleFormat");
-        const { updateBattlePanel } = require("../battlePanel");
+        const { updateBattlePanel, updatePrivatePanels } =
+            require("../battlePanel");
 
         const session = battleService.getSessionForPlayer(
             interaction.user.id
@@ -41,6 +42,8 @@ module.exports = {
             if (panelChannel) {
                 await updateBattlePanel(panelChannel, session);
             }
+
+            await updatePrivatePanels(interaction.client, session);
             return;
         }
 

@@ -12,7 +12,8 @@ module.exports = {
 
         const characterService = require("../../services/characterService");
         const battleService = require("../../game/services/battleService");
-        const { sendBattlePanel } = require("../battlePanel");
+        const { sendBattlePanel, sendPrivatePanels } =
+            require("../battlePanel");
 
         const accepted = battleService.acceptChallenge({
             channelId: interaction.channelId,
@@ -84,6 +85,10 @@ module.exports = {
             `⚔️ <@${opponentId}> accepted — battle started!`
         );
         await interaction.editReply("Battle started!");
+
+        // Private panels first — DM failures flag dmFailed before the
+        // public row is rendered, so the fallback shows real controls.
+        await sendPrivatePanels(interaction.client, session);
 
         // Initiative is a manual d20 from each player now.
         await sendBattlePanel(

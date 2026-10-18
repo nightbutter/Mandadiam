@@ -6,7 +6,8 @@ module.exports = {
         .setDescription("Make a normal attack on your turn"),
     async execute(interaction) {
         const battleService = require("../../game/services/battleService");
-        const { updateBattlePanel } = require("../battlePanel");
+        const { updateBattlePanel, updatePrivatePanels } =
+            require("../battlePanel");
 
         const session = battleService.getSessionForPlayer(
             interaction.user.id
@@ -60,5 +61,7 @@ module.exports = {
         if (panelChannel) {
             await updateBattlePanel(panelChannel, session, report);
         }
+
+        await updatePrivatePanels(interaction.client, session);
     }
 };

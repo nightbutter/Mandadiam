@@ -168,30 +168,143 @@ function rollButtonLabel(expected) {
     }
 }
 
+// Controls equally available to both participants — the only buttons
+// shown on the public panel while per-player DM panels are live.
+function sharedRow() {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("battle:refresh")
+            .setLabel("Refresh")
+            .setEmoji("🔄")
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId("battle:forfeit")
+            .setLabel("Forfeit")
+            .setEmoji("🏳️")
+            .setStyle(ButtonStyle.Danger)
+    );
+}
+
+function rollButton(pending) {
+    return new ButtonBuilder()
+        .setCustomId(`battle:roll:${pending.id}`)
+        .setLabel(rollButtonLabel(describeRoll(pending)))
+        .setEmoji("🎲")
+        .setStyle(ButtonStyle.Success);
+}
+
+function forfeitButton() {
+    return new ButtonBuilder()
+        .setCustomId("battle:forfeit")
+        .setLabel("Forfeit")
+        .setEmoji("🏳️")
+        .setStyle(ButtonStyle.Danger);
+}
+
+// One player's private (DM) battle panel: the same status embed as
+// the public view, but only the controls THIS player can currently
+// use — a real per-user hide, not just a permission check.
+function buildPrivateView(session, discordId) {
+    const { battle } = session;
+    const embeds = [buildBattleEmbed(session)];
+
+    if (battle.status === "finished") {
+        return {
+            content: "🏆 Battle finished — see the channel for results.",
+            embeds,
+            components: []
+        };
+    }
+
+    if (session.pending) {
+        const expected = describeRoll(session.pending);
+
+        if (expected && expected.discordId === discordId) {
+            return {
+                content: `🎲 Your roll — ${expected.text}`,
+                embeds,
+                components: [
+                    new ActionRowBuilder().addComponents(
+                        rollButton(session.pending),
+                        forfeitButton()
+                    )
+                ]
+            };
+        }
+
+        return {
+            content: expected
+                ? `⏳ Waiting for ${expected.text}`
+                : "⏳ Waiting for the other player…",
+            embeds,
+            components: [
+                new ActionRowBuilder().addComponents(forfeitButton())
+            ]
+        };
+    }
+
+    const actor = battle.currentTurn?.character;
+    const mine = session.players.find(
+        p => p.discordId === discordId
+    );
+
+    if (mine && mine.character === actor) {
+        return {
+            content: "⚔️ Your turn — choose an action.",
+            embeds,
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId("battle:attack")
+                        .setLabel("Attack")
+                        .setEmoji("⚔️")
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId("battle:skills")
+                        .setLabel("Skills")
+                        .setEmoji("✨")
+                        .setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder()
+                        .setCustomId("battle:ultimate")
+                        .setLabel("Ultimate")
+                        .setEmoji("💥")
+                        .setStyle(ButtonStyle.Danger),
+                    forfeitButton()
+                )
+            ]
+        };
+    }
+
+    return {
+        content: "⏳ Waiting for the other player's turn…",
+        embeds,
+        components: [
+            new ActionRowBuilder().addComponents(forfeitButton())
+        ]
+    };
+}
+
 function buildBattleRow(session) {
     const finished = session.battle.status === "finished";
+
+    // Per-player DM panels carry the action controls; the public
+    // panel keeps only shared controls unless a player's DM is
+    // unavailable (dmFailed) — then fall back to the full public row.
+    if (!session.dmFailed?.size && !finished) {
+        return sharedRow();
+    }
 
     // While dice are being collected the panel shows ONE roll button
     // keyed to the pending action id — stale clicks can't replay it.
     if (session.pending && !finished) {
-        const expected = session.pending;
-
         return new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId(`battle:roll:${expected.id}`)
-                .setLabel(rollButtonLabel(describeRoll(expected)))
-                .setEmoji("🎲")
-                .setStyle(ButtonStyle.Success),
+            rollButton(session.pending),
             new ButtonBuilder()
                 .setCustomId("battle:refresh")
                 .setLabel("Refresh")
                 .setEmoji("🔄")
                 .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId("battle:forfeit")
-                .setLabel("Forfeit")
-                .setEmoji("🏳️")
-                .setStyle(ButtonStyle.Danger)
+            forfeitButton()
         );
     }
 
@@ -220,12 +333,7 @@ function buildBattleRow(session) {
             .setEmoji("🔄")
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(finished),
-        new ButtonBuilder()
-            .setCustomId("battle:forfeit")
-            .setLabel("Forfeit")
-            .setEmoji("🏳️")
-            .setStyle(ButtonStyle.Danger)
-            .setDisabled(finished)
+        forfeitButton().setDisabled(finished)
     );
 }
 
@@ -487,6 +595,7 @@ module.exports = {
     pushLog,
     buildBattleEmbed,
     buildBattleRow,
+    buildPrivateView,
     rollButtonLabel,
     buildSkillSelectMenu,
     buildExPrompt,
